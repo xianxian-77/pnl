@@ -730,7 +730,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
     return out;
   }
-  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aidesc: "pt_aidesc", hist: "pt_hist", aibrief: "pt_aibrief", earn: "pt_earn" };
+  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aidesc: "pt_aidesc", hist: "pt_hist", aibrief: "pt_aibrief", earn: "pt_earn", holdts: "pt_holdts" };
 
   const EXAMPLE = [
     "# 格式: 日期 代码 买入价 股数   (# 开头是注释)",
@@ -745,6 +745,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
 
   let holdingsText = LS.get(K.holdings, null);
   if (typeof holdingsText !== "string") holdingsText = null;
+  let lastLocalEdit = LS.get(K.holdts, 0);            // 本机持仓最后修改时间(云同步的后写胜出依据)
+  if (typeof lastLocalEdit !== "number") lastLocalEdit = 0;
   let quotes = sanitizeQuotes(LS.get(K.quotes, {}));  // {SYM: {price, prevClose, currency, name, ts}}
   let manual = asObj(LS.get(K.manual, {}));           // {SYM: {price, ts}}
   const aiSec = {};                                   // AI 判定的板块缓存 {SYM: 标签}
@@ -790,9 +792,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     try {
       const j = JSON.parse(txt);
       if (j && typeof j === "object" && typeof j.t === "string")
-        return { t: j.t, p: typeof j.p === "string" ? j.p : "", k: typeof j.k === "string" ? j.k : "", g: typeof j.g === "string" ? j.g : "" };
+        return { t: j.t, p: typeof j.p === "string" ? j.p : "", k: typeof j.k === "string" ? j.k : "", g: typeof j.g === "string" ? j.g : "", s: typeof j.s === "string" ? j.s : "" };
     } catch {}
-    return { t: txt, p: "", k: "", g: "" };
+    return { t: txt, p: "", k: "", g: "", s: "" };
   }
   // 链接携带的行情/AI 源: 只在本机还没配置时采纳, 不覆盖已有设置
   function adoptSources(pl) {
@@ -800,10 +802,12 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     if (pl.p && /^https:\/\//.test(pl.p) && !settings.customProxy) { settings.customProxy = pl.p; chg = true; }
     if (pl.k && !settings.finnhubKey) { settings.finnhubKey = pl.k; chg = true; }
     if (pl.g && !settings.geminiKey) { settings.geminiKey = pl.g; chg = true; }
+    if (pl.s && !settings.syncToken) { settings.syncToken = pl.s; chg = true; }
     if (chg) LS.set(K.settings, settings);
   }
   function applyImport(pl) {
     holdingsText = pl.t; LS.set(K.holdings, holdingsText);
+    lastLocalEdit = 1; LS.set(K.holdts, 1); // 链接是快照, 时间戳压到最低 → 云端有更新的话下一次拉取必然胜出
     adoptSources(pl);
     try { history.replaceState(null, "", location.pathname + location.search); } catch {}
   }
@@ -1477,6 +1481,53 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     } finally { descBusy.delete(sym); }
   }
 
+  /* ---- 云同步: 持仓存进自己的 Deno KV, 各设备后写胜出 ---- */
+  function syncEndpoint() {
+    try {
+      if (!settings.customProxy || !settings.syncToken) return null;
+      return new URL(settings.customProxy).origin + "/sync?t=" + encodeURIComponent(settings.syncToken);
+    } catch { return null; }
+  }
+  async function pushSync() {
+    const ep = syncEndpoint();
+    if (!ep) return;
+    try {
+      const r = await fetch(ep, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ holdings: holdingsText, updatedAt: lastLocalEdit || Date.now() }),
+      });
+      if (r.status === 409) { // 云端比本机新 → 采纳云端
+        const j = await r.json();
+        if (j && typeof j.holdings === "string") adoptCloud(j);
+      }
+    } catch {}
+  }
+  let syncPulling = false;
+  async function pullSync() {
+    const ep = syncEndpoint();
+    if (!ep || syncPulling) return;
+    syncPulling = true;
+    try {
+      const r = await fetch(ep);
+      if (r.ok) {
+        const j = await r.json();
+        if (j && typeof j.holdings === "string" && typeof j.updatedAt === "number"
+          && j.updatedAt > lastLocalEdit && j.holdings.trim() !== holdingsText.trim()) {
+          adoptCloud(j);
+        }
+      }
+    } catch {} finally { syncPulling = false; }
+  }
+  function adoptCloud(j) {
+    holdingsText = j.holdings;
+    lastLocalEdit = j.updatedAt;
+    LS.set(K.holdings, holdingsText);
+    LS.set(K.holdts, lastLocalEdit);
+    toast("已同步云端最新持仓");
+    refresh();
+  }
+
   /* ---- Gemini 每日组合点评: 每天只生成一次 ---- */
   let briefBusy = false;
   async function refreshAiBrief() {
@@ -1825,6 +1876,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const line = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}  ${sym}  ${price}  ${side === "sell" ? -qty : qty}${tag ? "  " + tag : ""}`;
     holdingsText = (holdingsText.trim() ? holdingsText.replace(/\s+$/, "") + "\n" : "") + line;
     const ok = LS.set(K.holdings, holdingsText);
+    lastLocalEdit = Date.now();
+    LS.set(K.holdts, lastLocalEdit);
+    pushSync(); // 推到云端, 其他设备打开即见
     toast(ok ? `已记录：${side === "sell" ? "卖出" : "买入"} ${sym} ${qty} 股 @ ${price}` : "保存失败：浏览器不允许本站存储");
     $("tPrice").value = ""; $("tQty").value = ""; // 代码留着, 方便连续记
     refresh();
@@ -1900,12 +1954,14 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   window.addEventListener("resize", () => { clearTimeout(rsT); rsT = setTimeout(render, 180); });
 
   render();      // 先用缓存/手动价即时渲染
+  pullSync();    // 拉云端持仓(若比本机新则采纳并自动刷新)
   refresh();     // 再拉最新行情
 
   // 自动刷新: 页面可见时每 5 分钟; 切回页面且行情 >2 分钟旧时刷一次
-  setInterval(() => { if (!document.hidden) refresh(); }, 5 * 60 * 1000);
+  setInterval(() => { if (!document.hidden) { pullSync(); refresh(); } }, 5 * 60 * 1000);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
+    pullSync(); // 切回页面先对一次云端持仓
     const tsList = Object.values(quotes).map(x => x.ts || 0);
     const newest = tsList.length ? Math.max(...tsList) : 0;
     if (Date.now() - newest > 2 * 60 * 1000) refresh();
