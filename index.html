@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#ede9e0">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="持仓盈亏">
 <title>持仓盈亏</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
@@ -184,8 +185,21 @@
   .retsvg .rline { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
   .retsvg .rline.pos { stroke: var(--pos); } .retsvg .rline.neg { stroke: var(--neg); }
   .retsvg .rdot.pos { fill: var(--pos); } .retsvg .rdot.neg { fill: var(--neg); }
+  .retsvg .rbench { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
   .retlast { font-size: 20px; font-weight: 650; margin-top: 8px; font-variant-numeric: tabular-nums; }
   .retlast .retcap { display: block; font-size: 10.5px; font-weight: 400; letter-spacing: .06em; color: var(--muted); margin-top: 2px; }
+
+  /* ---- AI 每日点评 (海报首屏, 巨数下方) ---- */
+  .aibrief {
+    margin-top: 22px; max-width: 520px;
+    font-size: 14px; line-height: 1.8; color: var(--ink2);
+    border-left: 2px solid var(--ink); padding-left: 14px;
+  }
+  .aibrief .cap { display: block; font-size: 9.5px; letter-spacing: .14em; color: var(--muted); margin-top: 6px; }
+
+  /* ---- 财报小标 ---- */
+  .earnchip { color: var(--muted); letter-spacing: .02em; }
+  .earnchip.soon { color: var(--accent); font-weight: 600; }
 
   /* ---- 股票详解 ---- */
   .lots .desc { font-size: 13px; line-height: 1.75; color: var(--ink2); padding: 8px 0 10px; white-space: normal; max-width: 660px; }
@@ -229,7 +243,7 @@
   .sym .name { display: block; font-size: 11px; color: var(--muted); font-weight: 400;
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sub { display: block; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .price-cell .manual-mark { font-size: 11px; color: var(--muted); }
+  .price-cell .manual-mark { font-size: 11px; color: var(--muted); white-space: nowrap; display: inline-block; }
   .editp {
     font-size: 12px; line-height: 1; padding: 6px 7px; margin-left: 4px;
     border: none; background: none; color: var(--muted); vertical-align: baseline;
@@ -716,7 +730,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
     return out;
   }
-  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aidesc: "pt_aidesc", hist: "pt_hist" };
+  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aidesc: "pt_aidesc", hist: "pt_hist", aibrief: "pt_aibrief", earn: "pt_earn" };
 
   const EXAMPLE = [
     "# 格式: 日期 代码 买入价 股数   (# 开头是注释)",
@@ -743,6 +757,16 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   }
   let hist = asObj(LS.get(K.hist, {}));               // 历史日线 {档位: {SYM: {ts, cl, at}}}
   let curRange = "月";                                // 回报率曲线当前档位
+  let aiBrief = asObj(LS.get(K.aibrief, {}));         // AI 每日点评 {dayKey, text}
+  if (typeof aiBrief.text !== "string") aiBrief = {};
+  const earn = {};                                    // 财报日历缓存 {SYM: {date:"YYYY-MM-DD", at}}
+  for (const [k2, v2] of Object.entries(asObj(LS.get(K.earn, {})))) {
+    if (v2 && typeof v2 === "object" && typeof v2.date === "string") earn[k2] = { date: v2.date, at: typeof v2.at === "number" ? v2.at : 0 };
+  }
+  function localDayKey() {
+    const d = new Date();
+    return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  }
   let settings = asObj(LS.get(K.settings, {}));       // {finnhubKey, customProxy, greenUp}
   const expanded = new Set();
   let justExpanded = null;
@@ -936,8 +960,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     } finally { extBusy = false; }
   }
 
-  /* ---- 回报率曲线的历史日线: 分档拉取, 半天缓存 ---- */
+  /* ---- 回报率曲线的历史日线: 分档拉取, 半天缓存; SPY 作大盘基准一并拉 ---- */
   const RANGES = { "周": "interval=1d&range=5d", "月": "interval=1d&range=1mo", "年": "interval=1d&range=1y", "总": "interval=1wk&range=max" };
+  const BENCH = "SPY";
   async function tryHist(wrap, yUrl) {
     try {
       let j = JSON.parse(await fetchText(wrap(yUrl)));
@@ -974,7 +999,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const { positions } = CORE.aggregate(CORE.parseHoldings(holdingsText).lots);
     const bucket = asObj(hist[rk]);
     const now = Date.now(), TTL = 12 * 3600 * 1000;
-    const need = positions.filter(p => p.shares > 0).map(p => p.sym)
+    const need = [...new Set(positions.filter(p => p.shares > 0).map(p => p.sym).concat([BENCH]))]
       .filter(s => { const e = bucket[s]; return !(e && now - (e.at || 0) < TTL && Array.isArray(e.ts)); });
     if (!need.length) return;
     histBusy.add(rk);
@@ -1054,7 +1079,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       if (ok > 0) refreshSparks(syms); // 后台补 30 日走势, 不阻塞
       refreshExtended(syms);           // 后台补盘前/盘后价, 不阻塞
       ensureHist(curRange);            // 后台补回报率曲线历史, 不阻塞
+      refreshEarnings(syms);           // 后台补财报日历, 不阻塞
       refreshAiSectors();              // 后台问 Gemini 补板块归类, 不阻塞
+      if (ok > 0) refreshAiBrief();    // 每天首次拿到行情后生成 AI 点评
       if (pendingRefresh) { pendingRefresh = false; refresh(); }
     }
   }
@@ -1319,13 +1346,15 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       : `<div class="heroSub ${pnlCls(t.dayPnl)}">${arrow(t.dayPnl)} 今日 ${CORE.fmtMoney(t.dayPnl, mainCur, { signed: true })}（${CORE.fmtPct(t.dayPct)}${partial}）</div>`;
     el.innerHTML = `
       <div class="s-left">
-        <div class="s-mark" aria-hidden="true">✳</div>
+        <div class="s-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none"><g stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="3" x2="12" y2="21"/><line x1="4.2" y1="7.5" x2="19.8" y2="16.5"/><line x1="19.8" y1="7.5" x2="4.2" y2="16.5"/></g></svg></div>
         <p class="statement">${buildStatement(view)}</p>
         <div class="heroNum">
           <div class="label">总市值${others.length ? "（" + esc(mainCur) + "，另有 " + esc(others.join("/")) + " 持仓未并入）" : ""}</div>
           <div class="heroVal">${dotText(CORE.fmtMoney(t.value, mainCur), 6.2, true)}</div>
           ${heroSub}
         </div>
+        ${(aiBrief.dayKey === localDayKey() && aiBrief.text)
+          ? `<p class="aibrief">${esc(aiBrief.text)}<span class="cap">GEMINI · 今日点评</span></p>` : ""}
       </div>
       <div class="s-field">
         <div class="s-decor" style="left:64%;top:50%;width:56%"></div>
@@ -1448,6 +1477,67 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     } finally { descBusy.delete(sym); }
   }
 
+  /* ---- Gemini 每日组合点评: 每天只生成一次 ---- */
+  let briefBusy = false;
+  async function refreshAiBrief() {
+    if (briefBusy || !settings.geminiKey) return;
+    const dk = localDayKey();
+    if (aiBrief.dayKey === dk && aiBrief.text) return;
+    const parsed = CORE.parseHoldings(holdingsText);
+    const agg = CORE.aggregate(parsed.lots);
+    const q = effectiveQuotes(agg.positions.map(p => p.sym));
+    const view = CORE.computeView(agg.positions, q);
+    const curs = Object.keys(view.totals).sort((a, b) => view.totals[b].value - view.totals[a].value);
+    if (!curs.length) return;
+    const t = view.totals[curs[0]];
+    const rows = view.rows.filter(r => r.value != null && r.cur === curs[0]);
+    if (!rows.length || t.dayPct == null) return; // 有当日数据才值得点评
+    briefBusy = true;
+    try {
+      const lines = rows.map(r =>
+        `${r.sym}(${sectorOf(r)}):占比${(r.alloc * 100).toFixed(0)}%,今日${r.dayPct == null ? "?" : (r.dayPct * 100).toFixed(1) + "%"},累计${(r.unrealPct * 100).toFixed(1)}%`).join("; ");
+      const prompt = `你是克制的持仓观察助手。根据数据写今日组合点评：第一句说整体涨跌和主因，中间点名1-2只最值得注意的持仓，最后一句给一个观察角度。口语但冷静，不喊单不给买卖建议，不用感叹号，60-110字，直接输出正文不要开头语。数据：今日整体${(t.dayPct * 100).toFixed(2)}%，累计未实现${(t.unrealPct * 100).toFixed(1)}%；${lines}`;
+      const txt = await geminiText(prompt);
+      const clean = txt ? String(txt).trim().replace(/\s*\n+\s*/g, " ").slice(0, 220) : "";
+      if (clean) { aiBrief = { dayKey: dk, text: clean }; LS.set(K.aibrief, aiBrief); render(); }
+    } finally { briefBusy = false; }
+  }
+
+  /* ---- 财报日历: Finnhub 免费接口, 每代码缓存一天 ---- */
+  let earnBusy = false;
+  async function refreshEarnings(syms) {
+    if (earnBusy || !settings.finnhubKey) return;
+    const now = Date.now(), TTL = 24 * 3600 * 1000;
+    const need = syms.filter(s => !s.includes(".") && !(earn[s] && now - earn[s].at < TTL));
+    if (!need.length) return;
+    earnBusy = true;
+    try {
+      const fmt = d => d.toISOString().slice(0, 10);
+      const from = fmt(new Date()), to = fmt(new Date(Date.now() + 90 * 86400000));
+      const rs = await Promise.allSettled(need.map(async s => {
+        const j = JSON.parse(await fetchText(
+          `https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&symbol=${encodeURIComponent(s)}&token=${encodeURIComponent(settings.finnhubKey)}`, 10000));
+        const list = ((j && j.earningsCalendar) || []).map(e => String(e.date)).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+        return list[0] || "";
+      }));
+      let got = 0;
+      rs.forEach((r, i) => {
+        if (r.status === "fulfilled") { earn[need[i]] = { date: r.value, at: Date.now() }; got++; }
+      });
+      if (got) { LS.set(K.earn, earn); render(); }
+    } finally { earnBusy = false; }
+  }
+  // 21 天内的财报 → 行内小标, 7 天内高亮
+  function earnChip(sym) {
+    const e = earn[sym];
+    if (!e || !e.date) return "";
+    const d = new Date(e.date + "T12:00:00Z");
+    const days = Math.round((d.getTime() - Date.now()) / 86400000);
+    if (days < 0 || days > 21) return "";
+    const md = (d.getUTCMonth() + 1) + "/" + d.getUTCDate();
+    return ` <span class="earnchip${days <= 7 ? " soon" : ""}">财报 ${md}${days <= 7 ? "·" + (days === 0 ? "今天" : days + "天") : ""}</span>`;
+  }
+
   let aiSecBusy = false; const aiSecTried = new Set();
   async function refreshAiSectors() {
     if (aiSecBusy || !settings.geminiKey) return;
@@ -1555,19 +1645,38 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       `<button class="rtab${k === curRange ? " on" : ""}" data-r="${k}">${k}</button>`).join("") + `</div>`;
     let chart;
     if (rc.ts.length >= 2) {
+      // SPY 基准: 与组合曲线同一时间窗, 以窗口首日为 0 归一
+      let bench = null;
+      const bh = bucket[BENCH];
+      if (bh && Array.isArray(bh.ts) && bh.ts.length) {
+        const bp = [];
+        let bi = 0, base = null, okAll = true;
+        for (const T of rc.ts) {
+          while (bi + 1 < bh.ts.length && bh.ts[bi + 1] <= T) bi++;
+          if (bh.ts[bi] > T) { okAll = false; break; }
+          if (base == null) base = bh.cl[bi];
+          bp.push(bh.cl[bi] / base - 1);
+        }
+        if (okAll && bp.length === rc.ts.length) bench = bp;
+      }
       const W = 320, H = 130, P = 8;
-      let mn = Math.min(0, ...rc.pct), mx = Math.max(0, ...rc.pct);
+      const all = bench ? rc.pct.concat(bench) : rc.pct;
+      let mn = Math.min(0, ...all), mx = Math.max(0, ...all);
       if (mx - mn < 1e-9) { mx += 0.01; mn -= 0.01; }
       const X = i => P + i * (W - 2 * P) / (rc.pct.length - 1);
       const Y = v => P + (mx - v) * (H - 2 * P) / (mx - mn);
       const pts = rc.pct.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+      const bpts = bench ? bench.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ") : "";
       const last = rc.pct[rc.pct.length - 1];
-      chart = `<svg class="retsvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${curRange}回报率曲线，最新 ${CORE.fmtPct(last)}">
+      const bLast = bench ? bench[bench.length - 1] : null;
+      chart = `<svg class="retsvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${curRange}回报率曲线，组合 ${CORE.fmtPct(last)}${bLast == null ? "" : "，SPY " + CORE.fmtPct(bLast)}">
           <line class="rzero" x1="${P}" y1="${Y(0).toFixed(1)}" x2="${W - P}" y2="${Y(0).toFixed(1)}"/>
+          ${bench ? `<polyline class="rbench" points="${bpts}" fill="none"/>` : ""}
           <polyline class="rline ${last >= 0 ? "pos" : "neg"}" points="${pts}" fill="none" pathLength="1"/>
           <circle class="rdot ${last >= 0 ? "pos" : "neg"}" cx="${X(rc.pct.length - 1).toFixed(1)}" cy="${Y(last).toFixed(1)}" r="3.2"/>
         </svg>
-        <div class="retlast ${pnlCls(last)}">${CORE.fmtPct(last)}<span class="retcap">未实现回报率 · ${curRange}</span></div>`;
+        <div class="retlast ${pnlCls(last)}">${CORE.fmtPct(last)}
+          <span class="retcap">未实现回报率 · ${curRange}${bLast == null ? "" : ` · 同期 SPY（虚线）${CORE.fmtPct(bLast)}，${last >= bLast ? "跑赢" : "跑输"} ${CORE.fmtPct(Math.abs(last - bLast), false)}`}</span></div>`;
     } else {
       chart = `<div class="hint" style="padding:26px 0">${Object.keys(h2).length ? "该区间数据点不足" : "正在取历史数据…（公共代理偶尔要等一会）"}</div>`;
     }
@@ -1589,14 +1698,14 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       const M = (v, o) => CORE.fmtMoney(v, cur, o);
       const hasQ = r.value != null;
       const priceHtml = hasQ
-        ? `${M(r.quote.price)}<button class="editp" data-manual="${esc(r.sym)}" aria-label="手动改价" title="手动改价">✎</button>${r.quote.ext ? ` <span class="manual-mark">${esc(r.quote.ext)}</span>` : ""}${r.quote.manual ? ' <span class="manual-mark">手动</span>' : ""}${r.quote.stale ? ' <span class="manual-mark">⚠旧</span>' : ""}<span class="sub ${pnlCls(r.dayPnl)}">${r.dayPct == null ? "" : arrow(r.dayPnl) + " " + P(r.dayPct)}</span>`
+        ? `${M(r.quote.price)}<button class="editp" data-manual="${esc(r.sym)}" aria-label="手动改价" title="手动改价">✎</button>${r.quote.ext ? ` <span class="manual-mark">${esc(r.quote.ext)}</span>` : ""}${r.quote.manual ? ' <span class="manual-mark">手动</span>' : ""}${r.quote.stale ? ' <span class="manual-mark">⚠︎旧</span>' : ""}<span class="sub ${pnlCls(r.dayPnl)}">${r.dayPct == null ? "" : arrow(r.dayPnl) + " " + P(r.dayPct)}</span>`
         : `<button data-manual="${esc(r.sym)}" style="font-size:12px;padding:3px 8px">输入价格</button>`;
       const lotsHtml = expanded.has(r.sym) ? renderLots(r, cur) : "";
       const spark = r.quote && r.quote.spark;
       const sparkCls = (Array.isArray(spark) && spark.length >= 5) ? (spark[spark.length - 1] >= spark[0] ? "pos" : "neg") : "";
       const nm = (r.quote && r.quote.name) || "";
       return `<div class="hrow" data-sym="${esc(r.sym)}" tabindex="0" aria-expanded="${expanded.has(r.sym)}" style="--d:${Math.min(rowIdx, 10) * 40}ms">
-        <div class="c-sym sym">${dotText(r.sym, 2.4)}<span class="name">${esc(nm)}${nm ? " · " : ""}${esc(sectorOf(r))}</span></div>
+        <div class="c-sym sym">${dotText(r.sym, 2.4)}<span class="name">${esc(nm)}${nm ? " · " : ""}${esc(sectorOf(r))}${earnChip(r.sym)}</span></div>
         <div class="c-spark ${sparkCls}">${sparkSvg(spark)}</div>
         <div class="c-price num price-cell">${priceHtml}</div>
         <div class="c-meta">
@@ -1722,6 +1831,53 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   }
   $("buyBtn").onclick = () => recordTrade("buy");
   $("sellBtn").onclick = () => recordTrade("sell");
+
+  /* ---- PWA: 运行时生成 manifest + canvas 画图标, "添加到主屏幕"即成 App ---- */
+  function makeIcon(size) {
+    const c = document.createElement("canvas");
+    c.width = c.height = size;
+    const g = c.getContext("2d");
+    const rr = (x, y, w, h, r) => {
+      if (g.roundRect) { g.beginPath(); g.roundRect(x, y, w, h, r); g.fill(); }
+      else { g.fillRect(x, y, w, h); }
+    };
+    g.fillStyle = "#ede9e0";
+    g.fillRect(0, 0, size, size);
+    const m = size * 0.16, s = size - 2 * m;
+    g.fillStyle = "#141412";
+    rr(m, m, s, s, size * 0.13);
+    g.fillStyle = "#ede9e0";
+    const bw = s * 0.52, bh = s * 0.15, cx = size / 2, cy = size / 2, br = bh * 0.3;
+    rr(cx - bw / 2, cy - bh / 2, bw, bh, br);
+    rr(cx - bh / 2, cy - bw / 2, bh, bw, br);
+    return c.toDataURL("image/png");
+  }
+  function setupPwa() {
+    try {
+      if (location.protocol !== "http:" && location.protocol !== "https:") return; // file:// 无意义
+      const dir = location.pathname.replace(/[^/]*$/, "");
+      const manifest = {
+        name: "持仓盈亏 P/L Tracker",
+        short_name: "持仓盈亏",
+        start_url: location.origin + dir,   // blob manifest 里相对路径无从解析, 必须绝对地址
+        scope: location.origin + dir,
+        display: "standalone",
+        background_color: "#ede9e0",
+        theme_color: "#ede9e0",
+        icons: [192, 512].map(sz => ({ src: makeIcon(sz), sizes: sz + "x" + sz, type: "image/png", purpose: "any" })),
+      };
+      const link = document.createElement("link");
+      link.rel = "manifest";
+      link.href = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+      document.head.appendChild(link);
+      const ap = document.createElement("link"); // iOS 图标 (部分版本认 data URI, 不认则退回页面截图)
+      ap.rel = "apple-touch-icon";
+      ap.href = makeIcon(180);
+      document.head.appendChild(ap);
+      if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {}); // 没有 sw.js 就静默跳过
+    } catch {}
+  }
+  setupPwa();
 
   /* ---- 启动 ---- */
   document.body.classList.add("boot"); // 首屏入场动画窗口, 之后的重渲染不再重放
