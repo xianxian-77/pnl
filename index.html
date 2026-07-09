@@ -175,6 +175,29 @@
   }
   @media (hover: hover) { .pc-col:hover .pc-bar { opacity: .75; } }
 
+  /* ---- 回报率曲线 ---- */
+  .rtabs { display: flex; gap: 6px; margin: 2px 0 12px; }
+  .rtab { font-size: 12px; padding: 4px 13px; border-radius: 999px; border: 1px solid var(--hairline); background: none; color: var(--ink2); cursor: pointer; }
+  .rtab.on { background: var(--pill); border-color: var(--pill); color: var(--pill-ink); }
+  .retsvg { display: block; width: 100%; height: auto; }
+  .retsvg .rzero { stroke: var(--hairline); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .retsvg .rline { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  .retsvg .rline.pos { stroke: var(--pos); } .retsvg .rline.neg { stroke: var(--neg); }
+  .retsvg .rdot.pos { fill: var(--pos); } .retsvg .rdot.neg { fill: var(--neg); }
+  .retlast { font-size: 20px; font-weight: 650; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .retlast .retcap { display: block; font-size: 10.5px; font-weight: 400; letter-spacing: .06em; color: var(--muted); margin-top: 2px; }
+
+  /* ---- 股票详解 ---- */
+  .lots .desc { font-size: 13px; line-height: 1.75; color: var(--ink2); padding: 8px 0 10px; white-space: normal; max-width: 660px; }
+
+  /* ---- 板块分布: 墨色堆叠条 ---- */
+  .sectorWrap { margin-top: 4px; }
+  .sec-bar { display: flex; gap: 2px; height: 14px; border-radius: 3px; overflow: hidden; }
+  .sec-bar .seg { display: block; height: 100%; background: var(--ink); min-width: 3px; }
+  .sec-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 12px; color: var(--ink2); }
+  .sleg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--ink); margin-right: 6px; vertical-align: -1px; }
+  .sleg b { font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+
   /* ---- 宽屏横构图 ---- */
   @media (min-width: 1024px) {
     .statement { font-size: 38px; }
@@ -299,10 +322,11 @@
     .pc-col:hover .pc-bar { opacity: .75; }
   }
   @media (prefers-reduced-motion: no-preference) {
-    body.boot .structure, body.boot .tiles {
+    body.boot .structure, body.boot .tiles, body.boot .sectorWrap {
       animation: fadeUp .55s cubic-bezier(.2, .7, .3, 1) both;
     }
     body.boot .tiles { animation-delay: 140ms; }
+    body.boot .sectorWrap { animation-delay: 200ms; }
     body.boot .tile .dotnum circle, body.boot .heroNum .dotnum circle { animation: dotIn .5s ease both; }
     /* 数据刷新到达时点阵数字闪现一次 */
     body.tick .tile .dotnum circle, body.tick .heroNum .dotnum circle { animation: dotIn .4s ease both; }
@@ -382,6 +406,7 @@
   <div id="banner"></div>
   <section class="structure" id="structure" style="display:none"></section>
   <section class="tiles" id="tiles"></section>
+  <section class="sectorWrap" id="sectorWrap" style="display:none"></section>
   <div class="mainCols">
     <div class="holdWrap">
       <div class="kicker">持仓明细 <span class="en">HOLDINGS</span></div>
@@ -390,6 +415,8 @@
     <aside class="pnlWrap" id="pnlWrap" style="display:none">
       <div class="kicker">盈亏分布 <span class="en">P&amp;L BY HOLDING</span></div>
       <section class="pnlchart" id="pnlchart"></section>
+      <div class="kicker">回报率 <span class="en">RETURN</span></div>
+      <section class="retchart" id="retchart"></section>
     </aside>
   </div>
 
@@ -399,6 +426,8 @@
       <label>股票代码<input id="tSym" autocomplete="off" spellcheck="false" placeholder="如 QQQ / 0700.HK"></label>
       <label>价格<input id="tPrice" type="number" step="any" min="0" inputmode="decimal" placeholder="成交价"></label>
       <label>数量<input id="tQty" type="number" step="any" min="0" inputmode="decimal" placeholder="股数"></label>
+      <label>板块（选填）<input id="tTag" list="tagList" autocomplete="off" placeholder="如 军工 / ETF / 黄金"></label>
+      <datalist id="tagList"><option value="科技"><option value="半导体"><option value="ETF"><option value="黄金"><option value="军工"><option value="加密概念"><option value="医药"><option value="消费"><option value="能源"><option value="金融"><option value="汽车"></datalist>
       <div class="trade-btns">
         <button type="button" class="primary" id="buyBtn">买入</button>
         <button type="button" id="sellBtn">卖出</button>
@@ -451,13 +480,13 @@ const CORE = (() => {
         if (hasSym && numCnt >= 2) toks = rest;
       }
 
-      let dateStr = null, sym = null;
+      let dateStr = null, sym = null, tag = null;
       const nums = [];
       for (const t of toks) {
         if (dateStr === null && DATE_RE.test(t) && parseDate(t)) { dateStr = t; continue; }
         if (sym === null && /[A-Za-z]/.test(t) && SYM_RE.test(t)) { sym = t.toUpperCase(); continue; }
         if (NUM_RE.test(t)) { nums.push(parseFloat(t)); continue; }
-        // 其余 token 当备注忽略
+        if (tag === null) { tag = t; continue; } // 首个多余 token = 板块标签 (如 军工/ETF/黄金)
       }
       if (!sym || nums.length < 2) {
         warnings.push(`第 ${i + 1} 行无法识别: 「${raw}」`);
@@ -473,7 +502,7 @@ const CORE = (() => {
       lots.push({
         sym, price, qty, dateStr: dateStr || "",
         dateKey: pd ? pd.y * 10000 + pd.m * 100 + pd.d : 0,
-        line: i,
+        line: i, tag,
       });
     }
     return { lots, warnings };
@@ -487,7 +516,8 @@ const CORE = (() => {
     const warnings = [];
     for (const lot of sorted) {
       let p = bySym.get(lot.sym);
-      if (!p) { p = { sym: lot.sym, shares: 0, cost: 0, realized: 0, todayQty: 0, todayCost: 0, hasSells: false, lots: [] }; bySym.set(lot.sym, p); }
+      if (!p) { p = { sym: lot.sym, shares: 0, cost: 0, realized: 0, todayQty: 0, todayCost: 0, hasSells: false, sector: null, lots: [] }; bySym.set(lot.sym, p); }
+      if (lot.tag) p.sector = lot.tag; // 按时间序, 最新标签生效
       if (lot.qty > 0) {
         p.shares += lot.qty;
         p.cost += lot.qty * lot.price;
@@ -582,6 +612,44 @@ const CORE = (() => {
     return { rows, flats, totals, missing };
   }
 
+  // ---- 组合回报率曲线 ----
+  // lots + 各代码日线 {SYM:{ts:[unix秒,升序], cl:[...]}} → {ts:[], pct:[]}
+  // 每个时点: 按 ≤当日 的交易重建持仓, 市值=各代码 ≤该时点 最近收盘 × 股数,
+  // 回报率=(市值-成本)/成本 (未实现口径, 与页面其余数字一致)
+  function tsDayKey(T) {
+    const d = new Date(T * 1000);
+    return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+  }
+  function returnCurve(lots, hist) {
+    const syms = Object.keys(hist).filter(s => hist[s] && Array.isArray(hist[s].ts) && hist[s].ts.length > 0);
+    if (!syms.length || !lots.length) return { ts: [], pct: [] };
+    let base = syms[0];
+    for (const s of syms) if (hist[s].ts.length > hist[base].ts.length) base = s;
+    const ptr = {};
+    syms.forEach(s => ptr[s] = 0);
+    const out = { ts: [], pct: [] };
+    for (const T of hist[base].ts) {
+      const dk = tsDayKey(T);
+      const held = aggregate(lots.filter(l => l.dateKey <= dk)).positions.filter(p => p.shares > 0);
+      if (!held.length) continue;
+      let value = 0, cost = 0, ok = true;
+      for (const p of held) {
+        const h = hist[p.sym];
+        if (!h || !h.ts.length) { ok = false; break; }
+        let i = ptr[p.sym];
+        while (i + 1 < h.ts.length && h.ts[i + 1] <= T) i++;
+        ptr[p.sym] = i;
+        if (h.ts[i] > T) { ok = false; break; } // 该代码此时还没有数据
+        value += h.cl[i] * p.shares;
+        cost += p.cost;
+      }
+      if (!ok || !(cost > 0)) continue;
+      out.ts.push(T);
+      out.pct.push((value - cost) / cost);
+    }
+    return out;
+  }
+
   // ---- 格式化 ----
   // 注意: 不映射 "GBp"(便士) — 伦敦股报价在 fetchQuote 里已 ÷100 归一成 GBP
   const CUR_SYM = { USD: "$", HKD: "HK$", CNY: "¥", CNH: "¥", GBP: "£", EUR: "€", JPY: "¥", CAD: "C$", AUD: "A$", CHF: "CHF " };
@@ -604,7 +672,7 @@ const CORE = (() => {
     return round6(v).toLocaleString("en-US", { maximumFractionDigits: 6 });
   }
 
-  return { parseDate, parseHoldings, aggregate, computeView, inferCurrency, fmtMoney, fmtPct, fmtShares };
+  return { parseDate, parseHoldings, aggregate, computeView, returnCurve, inferCurrency, fmtMoney, fmtPct, fmtShares };
 })();
 if (typeof module !== "undefined" && module.exports) module.exports = CORE;
 /* ===CORE-END=== */
@@ -641,10 +709,14 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
         spark: Array.isArray(q.spark) ? q.spark.filter(v => typeof v === "number" && v > 0).slice(-40) : null,
         sparkTs: typeof q.sparkTs === "number" ? q.sparkTs : 0,
       };
+      if (q.ext && typeof q.ext === "object" && q.ext.price > 0 && q.ext.prev > 0
+        && (q.ext.kind === "盘前" || q.ext.kind === "盘后") && typeof q.ext.at === "number") {
+        out[sym].ext = { price: q.ext.price, prev: q.ext.prev, kind: q.ext.kind, at: q.ext.at };
+      }
     }
     return out;
   }
-  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy" };
+  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aidesc: "pt_aidesc", hist: "pt_hist" };
 
   const EXAMPLE = [
     "# 格式: 日期 代码 买入价 股数   (# 开头是注释)",
@@ -661,6 +733,16 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   if (typeof holdingsText !== "string") holdingsText = null;
   let quotes = sanitizeQuotes(LS.get(K.quotes, {}));  // {SYM: {price, prevClose, currency, name, ts}}
   let manual = asObj(LS.get(K.manual, {}));           // {SYM: {price, ts}}
+  const aiSec = {};                                   // AI 判定的板块缓存 {SYM: 标签}
+  for (const [k2, v2] of Object.entries(asObj(LS.get(K.aisec, {})))) {
+    if (typeof v2 === "string" && v2.length > 0 && v2.length <= 8) aiSec[k2] = v2;
+  }
+  const aiDesc = {};                                  // AI 股票详解缓存 {SYM: 一段话}
+  for (const [k2, v2] of Object.entries(asObj(LS.get(K.aidesc, {})))) {
+    if (typeof v2 === "string" && v2.length > 0 && v2.length <= 400) aiDesc[k2] = v2;
+  }
+  let hist = asObj(LS.get(K.hist, {}));               // 历史日线 {档位: {SYM: {ts, cl, at}}}
+  let curRange = "月";                                // 回报率曲线当前档位
   let settings = asObj(LS.get(K.settings, {}));       // {finnhubKey, customProxy, greenUp}
   const expanded = new Set();
   let justExpanded = null;
@@ -684,17 +766,21 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     try {
       const j = JSON.parse(txt);
       if (j && typeof j === "object" && typeof j.t === "string")
-        return { t: j.t, p: typeof j.p === "string" ? j.p : "", k: typeof j.k === "string" ? j.k : "" };
+        return { t: j.t, p: typeof j.p === "string" ? j.p : "", k: typeof j.k === "string" ? j.k : "", g: typeof j.g === "string" ? j.g : "" };
     } catch {}
-    return { t: txt, p: "", k: "" };
+    return { t: txt, p: "", k: "", g: "" };
   }
-  function applyImport(pl) {
-    holdingsText = pl.t; LS.set(K.holdings, holdingsText);
-    // 链接携带的行情源只在本机还没配置时采用, 不覆盖已有设置
+  // 链接携带的行情/AI 源: 只在本机还没配置时采纳, 不覆盖已有设置
+  function adoptSources(pl) {
     let chg = false;
     if (pl.p && /^https:\/\//.test(pl.p) && !settings.customProxy) { settings.customProxy = pl.p; chg = true; }
     if (pl.k && !settings.finnhubKey) { settings.finnhubKey = pl.k; chg = true; }
+    if (pl.g && !settings.geminiKey) { settings.geminiKey = pl.g; chg = true; }
     if (chg) LS.set(K.settings, settings);
+  }
+  function applyImport(pl) {
+    holdingsText = pl.t; LS.set(K.holdings, holdingsText);
+    adoptSources(pl);
     try { history.replaceState(null, "", location.pathname + location.search); } catch {}
   }
   const hashMatch = location.hash.match(/[#&]h=([A-Za-z0-9\-_=]+)/);
@@ -702,6 +788,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   if (hashMatch) {
     const pl = decodeSharePayload(hashMatch[1]);
     if (pl) {
+      adoptSources(pl); // Key 与持仓解耦: 无论持仓选哪份, 链接带的源设置先装上
       if (holdingsText == null || holdingsText.trim() === pl.t.trim()) applyImport(pl);
       else pendingImport = pl; // 与本地不同 → 让用户选
     }
@@ -714,8 +801,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   // 实测: corsproxy.io 已限定仅 localhost 开发可用, 放最后当摆设;
   // allorigins 的 /raw 和 /get(JSON 包一层)经常一个挂一个活, 都放进链
   const PROXIES = [
+    u => "https://api.allorigins.win/get?url=" + encodeURIComponent(u), // 实测最稳, 放第一省一轮超时
     u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
-    u => "https://api.allorigins.win/get?url=" + encodeURIComponent(u),
     u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
     u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
   ];
@@ -794,6 +881,113 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     throw new Error("no quote");
   }
 
+  /* ---- 盘前/盘后覆盖层: Yahoo 1 分钟线(includePrePost)取最新延时成交 ----
+     Finnhub 免费档不含盘前(实测时间戳停在常规收盘); 仅对美股(无后缀)运行,
+     kind 用 Yahoo 官方时段边界判定; 涨跌基准=最近一次常规收盘 */
+  async function tryExt(wrap, yUrl) {
+    try {
+      let j = JSON.parse(await fetchText(wrap(yUrl)));
+      if (j && typeof j.contents === "string") j = JSON.parse(j.contents);
+      const res = j && j.chart && j.chart.result && j.chart.result[0];
+      const meta = res && res.meta;
+      if (!(meta && typeof meta.regularMarketPrice === "number" && meta.regularMarketPrice > 0)) return null;
+      const ts = res.timestamp || [];
+      const cl = (res.indicators && res.indicators.quote && res.indicators.quote[0] && res.indicators.quote[0].close) || [];
+      let li = -1;
+      for (let i = cl.length - 1; i >= 0; i--) if (typeof cl[i] === "number" && cl[i] > 0) { li = i; break; }
+      if (li < 0) return null;
+      const tp = meta.currentTradingPeriod || {};
+      const t = ts[li];
+      let kind = null;
+      if (tp.pre && tp.regular && t >= tp.pre.start && t < tp.regular.start) kind = "盘前";
+      else if (tp.post && t >= tp.post.start) kind = "盘后";
+      if (!kind) return null; // 常规时段/无延时成交 → 不覆盖
+      return { price: cl[li], prev: meta.regularMarketPrice, kind };
+    } catch { return null; }
+  }
+  async function fetchExt(sym) {
+    const yUrl = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=1m&range=1d&includePrePost=true";
+    if (/^https:\/\//.test(settings.customProxy || "")) {
+      const e = await tryExt(u => settings.customProxy + encodeURIComponent(u), yUrl);
+      if (e) return e;
+    }
+    for (let i = 0; i < PROXIES.length; i++) {
+      const idx = (stickyProxy + i) % PROXIES.length;
+      const e = await tryExt(PROXIES[idx], yUrl);
+      if (e) { stickyProxy = idx; LS.set(K.proxy, idx); return e; }
+    }
+    return null;
+  }
+  let extBusy = false;
+  async function refreshExtended(syms) {
+    if (extBusy) return;
+    const need = syms.filter(s => !s.includes(".") && quotes[s] && quotes[s].price > 0);
+    if (!need.length) return;
+    extBusy = true;
+    try {
+      const rs = await Promise.allSettled(need.map(s => fetchExt(s)));
+      let got = 0;
+      rs.forEach((r, i) => {
+        const q = quotes[need[i]];
+        if (r.status === "fulfilled" && r.value) { q.ext = { ...r.value, at: Date.now() }; got++; }
+        else if (q.ext) { delete q.ext; got++; } // 盘前结束或取不到 → 摘除覆盖
+      });
+      if (got) { LS.set(K.quotes, quotes); render(); }
+    } finally { extBusy = false; }
+  }
+
+  /* ---- 回报率曲线的历史日线: 分档拉取, 半天缓存 ---- */
+  const RANGES = { "周": "interval=1d&range=5d", "月": "interval=1d&range=1mo", "年": "interval=1d&range=1y", "总": "interval=1wk&range=max" };
+  async function tryHist(wrap, yUrl) {
+    try {
+      let j = JSON.parse(await fetchText(wrap(yUrl)));
+      if (j && typeof j.contents === "string") j = JSON.parse(j.contents);
+      const res = j && j.chart && j.chart.result && j.chart.result[0];
+      if (!res) return null;
+      const ts = res.timestamp;
+      const cl = res.indicators && res.indicators.quote && res.indicators.quote[0] && res.indicators.quote[0].close;
+      if (!Array.isArray(ts) || !Array.isArray(cl)) return null;
+      const div = res.meta && res.meta.currency === "GBp" ? 100 : 1; // 便士归一
+      const ots = [], ocl = [];
+      for (let i = 0; i < ts.length; i++)
+        if (typeof cl[i] === "number" && cl[i] > 0) { ots.push(ts[i]); ocl.push(Math.round(cl[i] / div * 10000) / 10000); }
+      return ots.length >= 2 ? { ts: ots, cl: ocl } : null;
+    } catch { return null; }
+  }
+  async function fetchHist(sym, params) {
+    const yUrl = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?" + params;
+    if (/^https:\/\//.test(settings.customProxy || "")) {
+      const h = await tryHist(u => settings.customProxy + encodeURIComponent(u), yUrl);
+      if (h) return h;
+    }
+    for (let i = 0; i < PROXIES.length; i++) {
+      const idx = (stickyProxy + i) % PROXIES.length;
+      const h = await tryHist(PROXIES[idx], yUrl);
+      if (h) { stickyProxy = idx; LS.set(K.proxy, idx); return h; }
+    }
+    return null;
+  }
+  const histBusy = new Set();
+  async function ensureHist(rk) {
+    const params = RANGES[rk];
+    if (!params || histBusy.has(rk)) return;
+    const { positions } = CORE.aggregate(CORE.parseHoldings(holdingsText).lots);
+    const bucket = asObj(hist[rk]);
+    const now = Date.now(), TTL = 12 * 3600 * 1000;
+    const need = positions.filter(p => p.shares > 0).map(p => p.sym)
+      .filter(s => { const e = bucket[s]; return !(e && now - (e.at || 0) < TTL && Array.isArray(e.ts)); });
+    if (!need.length) return;
+    histBusy.add(rk);
+    try {
+      const rs = await Promise.allSettled(need.map(s => fetchHist(s, params)));
+      let got = 0;
+      rs.forEach((r, i) => {
+        if (r.status === "fulfilled" && r.value) { bucket[need[i]] = { ts: r.value.ts, cl: r.value.cl, at: Date.now() }; got++; }
+      });
+      if (got) { hist[rk] = bucket; LS.set(K.hist, hist); render(); }
+    } finally { histBusy.delete(rk); }
+  }
+
   // 后台补 sparkline (Finnhub 路径无历史; 不阻塞行情刷新, 半天补一次)
   let sparksBusy = false;
   async function refreshSparks(syms) {
@@ -858,6 +1052,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
         setTimeout(() => document.body.classList.remove("tick"), 900);
       }
       if (ok > 0) refreshSparks(syms); // 后台补 30 日走势, 不阻塞
+      refreshExtended(syms);           // 后台补盘前/盘后价, 不阻塞
+      ensureHist(curRange);            // 后台补回报率曲线历史, 不阻塞
+      refreshAiSectors();              // 后台问 Gemini 补板块归类, 不阻塞
       if (pendingRefresh) { pendingRefresh = false; refresh(); }
     }
   }
@@ -873,7 +1070,11 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       if (m && m.price > 0 && (!q || !(q.price > 0) || (m.ts || 0) > (q.ts || 0))) {
         out[s] = { price: m.price, prevClose: null, currency: (q && q.currency) || CORE.inferCurrency(s), name: (q && q.name) || null, spark: (q && q.spark) || null, manual: true };
       } else if (q && q.price > 0) {
-        out[s] = { ...q, stale: now - (q.ts || 0) > STALE };
+        // 盘前/盘后覆盖: 15 分钟内取到的延时成交价优先, 涨跌基准换成最近常规收盘
+        const e = (q.ext && q.ext.price > 0 && now - (q.ext.at || 0) < 15 * 60 * 1000) ? q.ext : null;
+        out[s] = e
+          ? { ...q, price: e.price, prevClose: e.prev > 0 ? e.prev : q.prevClose, ext: e.kind }
+          : { ...q, stale: now - (q.ts || 0) > STALE };
       }
     }
     return out;
@@ -969,8 +1170,10 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     renderBanner(parsed, agg, view);
     renderTiles(view);
     renderStructure(view);
+    renderSectorBar(view);
     renderHoldings(view, q);
     renderPnlChart(view);
+    renderReturnCurve(parsed);
 
     const tsList = Object.values(quotes).map(x => x.ts || 0).filter(Boolean);
     if (tsList.length) {
@@ -1024,7 +1227,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       `<div class="tile"><div class="label">总盈亏（未实现）</div>
         <div class="value ${pnlCls(t.unreal)}">${dotText(M(t.unreal, { signed: true }), 4, true)}</div>
         <div class="delta ${pnlCls(t.unreal)}">${P(t.unrealPct)}</div></div>`,
-      `<div class="tile"><div class="label">今日盈亏${t.dayPartial > 0 ? `（不含 ${t.dayPartial} 项）` : ""}</div>
+      `<div class="tile"><div class="label">今日盈亏${view.rows.some(r => r.quote && r.quote.ext) ? "（含盘前后）" : ""}${t.dayPartial > 0 ? `（不含 ${t.dayPartial} 项）` : ""}</div>
         <div class="value ${pnlCls(t.dayPnl)}">${t.dayPct == null ? "—" : dotText(M(t.dayPnl, { signed: true }), 4, true)}</div>
         <div class="delta ${pnlCls(t.dayPnl)}">${t.dayPct == null ? "" : P(t.dayPct)}</div></div>`,
       `<div class="tile"><div class="label">已实现盈亏</div>
@@ -1179,6 +1382,115 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     });
   }
 
+  /* ---- 板块: 手动标签优先, 常见代码自动归类, 都没有则「其他」 ---- */
+  const AUTO_SECTOR = {
+    MU: "半导体", NVDA: "半导体", AMD: "半导体", INTC: "半导体", TSM: "半导体", AVGO: "半导体", QCOM: "半导体",
+    QQQ: "ETF", SPY: "ETF", VOO: "ETF", VTI: "ETF", IWM: "ETF", DIA: "ETF", ARKK: "ETF", SMH: "ETF",
+    IAUM: "黄金", GLD: "黄金", IAU: "黄金", GDX: "黄金", SGOL: "黄金",
+    LMT: "军工", RTX: "军工", NOC: "军工", GD: "军工", BA: "军工", HII: "军工",
+    MSTR: "加密概念", COIN: "加密概念", MARA: "加密概念", RIOT: "加密概念", IBIT: "加密概念", HOOD: "加密概念",
+    LITE: "光通信", AAPL: "科技", MSFT: "科技", GOOG: "科技", GOOGL: "科技", META: "科技", AMZN: "科技", NFLX: "科技", ORCL: "科技", PLTR: "科技",
+    TSLA: "汽车", NIO: "汽车", LI: "汽车", XPEV: "汽车",
+    JPM: "金融", V: "金融", MA: "金融", GS: "金融", "BRK-B": "金融",
+    XOM: "能源", CVX: "能源", OXY: "能源",
+    LLY: "医药", PFE: "医药", JNJ: "医药", UNH: "医药", NVO: "医药",
+    KO: "消费", PG: "消费", MCD: "消费", NKE: "消费", COST: "消费", WMT: "消费",
+  };
+  // 优先级: 手动标签 > Gemini 判定(缓存) > 内置映射 > 其他
+  const sectorOf = p => p.sector || aiSec[p.sym] || AUTO_SECTOR[p.sym] || "其他";
+
+  /* ---- Gemini 通用调用 (gemini flash 偶发 503/429, 重试两次退避) ---- */
+  async function geminiText(prompt, wantJson) {
+    const key = settings.geminiKey;
+    if (!key) return null;
+    const body = JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: wantJson ? { temperature: 0, responseMimeType: "application/json" } : { temperature: 0.2 },
+    });
+    for (let i = 0; i < 3; i++) {
+      try {
+        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + encodeURIComponent(key),
+          { method: "POST", headers: { "Content-Type": "application/json" }, body });
+        if (r.ok) {
+          const j = await r.json();
+          return (j && j.candidates && j.candidates[0] && j.candidates[0].content
+            && j.candidates[0].content.parts && j.candidates[0].content.parts[0]
+            && j.candidates[0].content.parts[0].text) || null;
+        }
+        if (r.status !== 503 && r.status !== 429) return null; // 非过载类错误不重试
+      } catch {}
+      await new Promise(res => setTimeout(res, 4000 * (i + 1)));
+    }
+    return null;
+  }
+
+  /* ---- Gemini 板块判定: 只对没有任何归类的代码问一次, 结果永久缓存 ---- */
+  async function classifySectors(syms) {
+    if (!syms.length) return null;
+    const txt = await geminiText(`给下列股票代码各分配一个简短中文板块标签(2-4字, 例: 科技/半导体/军工/黄金/ETF/医药/金融/能源/消费/汽车/加密概念/光通信/网络安全/工业)。只返回 JSON 对象 {"代码":"标签"}。代码: ${syms.join(", ")}`, true);
+    try { return txt ? JSON.parse(txt) : null; } catch { return null; }
+  }
+
+  /* ---- Gemini 股票详解: 首次展开该行时生成, 永久缓存 ---- */
+  const descBusy = new Set();
+  async function ensureDesc(sym) {
+    if (aiDesc[sym] || descBusy.has(sym) || !settings.geminiKey) return;
+    descBusy.add(sym);
+    try {
+      const nm = (quotes[sym] && quotes[sym].name) || "";
+      const txt = await geminiText(`用通俗易懂的中文介绍 ${sym}${nm ? "（" + nm + "）" : ""} 是做什么的：主营业务、靠什么赚钱、在行业里的位置。150-200字，一段话，口语化但准确，不要标题、不要列表、不要问候语。若是 ETF 或基金，说明它跟踪什么、适合什么用途。`);
+      const clean = txt ? String(txt).trim().replace(/\s*\n+\s*/g, " ").slice(0, 320) : "";
+      if (clean) {
+        aiDesc[sym] = clean;
+        LS.set(K.aidesc, aiDesc);
+        render();
+      }
+    } finally { descBusy.delete(sym); }
+  }
+
+  let aiSecBusy = false; const aiSecTried = new Set();
+  async function refreshAiSectors() {
+    if (aiSecBusy || !settings.geminiKey) return;
+    const { positions } = CORE.aggregate(CORE.parseHoldings(holdingsText).lots);
+    const need = positions
+      .filter(p => !p.sector && !aiSec[p.sym] && !AUTO_SECTOR[p.sym] && !aiSecTried.has(p.sym))
+      .map(p => p.sym);
+    if (!need.length) return;
+    aiSecBusy = true;
+    try {
+      need.forEach(s => aiSecTried.add(s)); // 本次会话内失败也不再重复问
+      const map = await classifySectors(need);
+      let got = 0;
+      for (const [k2, v2] of Object.entries(map || {})) {
+        const sym = String(k2).toUpperCase().trim();
+        const val = String(v2).replace(/\s+/g, "").slice(0, 6);
+        if (need.includes(sym) && val) { aiSec[sym] = val; got++; }
+      }
+      if (got) { LS.set(K.aisec, aiSec); render(); }
+    } catch {} finally { aiSecBusy = false; }
+  }
+
+  /* ---- 板块分布: 墨色堆叠条(深浅=占比排名) + 图例 ---- */
+  const SEC_OP = [0.92, 0.68, 0.52, 0.38, 0.28, 0.2, 0.15, 0.11];
+  function renderSectorBar(view) {
+    const el = $("sectorWrap");
+    const curs = Object.keys(view.totals).sort((a, b) => view.totals[b].value - view.totals[a].value);
+    const rows = curs.length ? view.rows.filter(r => r.value != null && r.cur === curs[0]) : [];
+    if (rows.length < 1) { el.style.display = "none"; el.innerHTML = ""; return; }
+    el.style.display = "";
+    const total = view.totals[curs[0]].value;
+    const g = Object.create(null);
+    rows.forEach(r => { const s = sectorOf(r); g[s] = (g[s] || 0) + r.value; });
+    const parts = Object.entries(g).sort((a, b) => b[1] - a[1]);
+    const op = i => SEC_OP[Math.min(i, SEC_OP.length - 1)];
+    const bar = parts.map(([name, v], i) =>
+      `<i class="seg" style="width:${(v / total * 100).toFixed(2)}%;opacity:${op(i)}" title="${esc(name)} ${(v / total * 100).toFixed(1)}%"></i>`).join("");
+    const legend = parts.map(([name, v], i) =>
+      `<span class="sleg"><i style="opacity:${op(i)}"></i>${esc(name)} <b>${(v / total * 100).toFixed(1)}%</b></span>`).join("");
+    el.innerHTML = `<div class="kicker">板块分布 <span class="en">SECTORS</span></div>
+      <div class="sec-bar">${bar}</div><div class="sec-legend">${legend}</div>`;
+  }
+
   /* ---- 盈亏分布图: 每只一根渐隐柱, 盈利向上/亏损向下, 高度∝|盈亏%| ---- */
   function renderPnlChart(view) {
     const wrap = $("pnlWrap");
@@ -1231,6 +1543,42 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     </svg>`;
   }
 
+  /* ---- 回报率曲线: 周/月/年/总 四档, 组合未实现回报率 ---- */
+  function renderReturnCurve(parsed) {
+    const box = $("retchart");
+    const bucket = asObj(hist[curRange]);
+    const h2 = {};
+    for (const [s, v] of Object.entries(bucket))
+      if (v && Array.isArray(v.ts) && Array.isArray(v.cl) && v.ts.length === v.cl.length) h2[s] = { ts: v.ts, cl: v.cl };
+    const rc = CORE.returnCurve(parsed.lots, h2);
+    const tabs = `<div class="rtabs">` + Object.keys(RANGES).map(k =>
+      `<button class="rtab${k === curRange ? " on" : ""}" data-r="${k}">${k}</button>`).join("") + `</div>`;
+    let chart;
+    if (rc.ts.length >= 2) {
+      const W = 320, H = 130, P = 8;
+      let mn = Math.min(0, ...rc.pct), mx = Math.max(0, ...rc.pct);
+      if (mx - mn < 1e-9) { mx += 0.01; mn -= 0.01; }
+      const X = i => P + i * (W - 2 * P) / (rc.pct.length - 1);
+      const Y = v => P + (mx - v) * (H - 2 * P) / (mx - mn);
+      const pts = rc.pct.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
+      const last = rc.pct[rc.pct.length - 1];
+      chart = `<svg class="retsvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${curRange}回报率曲线，最新 ${CORE.fmtPct(last)}">
+          <line class="rzero" x1="${P}" y1="${Y(0).toFixed(1)}" x2="${W - P}" y2="${Y(0).toFixed(1)}"/>
+          <polyline class="rline ${last >= 0 ? "pos" : "neg"}" points="${pts}" fill="none" pathLength="1"/>
+          <circle class="rdot ${last >= 0 ? "pos" : "neg"}" cx="${X(rc.pct.length - 1).toFixed(1)}" cy="${Y(last).toFixed(1)}" r="3.2"/>
+        </svg>
+        <div class="retlast ${pnlCls(last)}">${CORE.fmtPct(last)}<span class="retcap">未实现回报率 · ${curRange}</span></div>`;
+    } else {
+      chart = `<div class="hint" style="padding:26px 0">${Object.keys(h2).length ? "该区间数据点不足" : "正在取历史数据…（公共代理偶尔要等一会）"}</div>`;
+    }
+    box.innerHTML = tabs + chart;
+    box.querySelectorAll(".rtab").forEach(b => b.addEventListener("click", () => {
+      curRange = b.dataset.r;
+      ensureHist(curRange);
+      render();
+    }));
+  }
+
   function renderHoldings(view, q) {
     if (!view.rows.length && !view.flats.length) { $("holdings").innerHTML = ""; $("holdings").style.display = "none"; return; }
     $("holdings").style.display = "";
@@ -1241,13 +1589,14 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       const M = (v, o) => CORE.fmtMoney(v, cur, o);
       const hasQ = r.value != null;
       const priceHtml = hasQ
-        ? `${M(r.quote.price)}<button class="editp" data-manual="${esc(r.sym)}" aria-label="手动改价" title="手动改价">✎</button>${r.quote.manual ? ' <span class="manual-mark">手动</span>' : ""}${r.quote.stale ? ' <span class="manual-mark">⚠旧</span>' : ""}<span class="sub ${pnlCls(r.dayPnl)}">${r.dayPct == null ? "" : arrow(r.dayPnl) + " " + P(r.dayPct)}</span>`
+        ? `${M(r.quote.price)}<button class="editp" data-manual="${esc(r.sym)}" aria-label="手动改价" title="手动改价">✎</button>${r.quote.ext ? ` <span class="manual-mark">${esc(r.quote.ext)}</span>` : ""}${r.quote.manual ? ' <span class="manual-mark">手动</span>' : ""}${r.quote.stale ? ' <span class="manual-mark">⚠旧</span>' : ""}<span class="sub ${pnlCls(r.dayPnl)}">${r.dayPct == null ? "" : arrow(r.dayPnl) + " " + P(r.dayPct)}</span>`
         : `<button data-manual="${esc(r.sym)}" style="font-size:12px;padding:3px 8px">输入价格</button>`;
       const lotsHtml = expanded.has(r.sym) ? renderLots(r, cur) : "";
       const spark = r.quote && r.quote.spark;
       const sparkCls = (Array.isArray(spark) && spark.length >= 5) ? (spark[spark.length - 1] >= spark[0] ? "pos" : "neg") : "";
+      const nm = (r.quote && r.quote.name) || "";
       return `<div class="hrow" data-sym="${esc(r.sym)}" tabindex="0" aria-expanded="${expanded.has(r.sym)}" style="--d:${Math.min(rowIdx, 10) * 40}ms">
-        <div class="c-sym sym">${dotText(r.sym, 2.4)}<span class="name">${esc((r.quote && r.quote.name) || "")}</span></div>
+        <div class="c-sym sym">${dotText(r.sym, 2.4)}<span class="name">${esc(nm)}${nm ? " · " : ""}${esc(sectorOf(r))}</span></div>
         <div class="c-spark ${sparkCls}">${sparkSvg(spark)}</div>
         <div class="c-price num price-cell">${priceHtml}</div>
         <div class="c-meta">
@@ -1270,7 +1619,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const toggle = el => {
       const sym = el.dataset.sym;
       if (expanded.has(sym)) expanded.delete(sym);
-      else { expanded.add(sym); justExpanded = sym; } // 只让"刚展开的"明细播入场动画
+      else { expanded.add(sym); justExpanded = sym; ensureDesc(sym); } // 展开时顺带生成股票详解
       render();
       justExpanded = null;
     };
@@ -1308,7 +1657,10 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }).join("");
     const note = (r.hasSells && price != null)
       ? `<div class="note">该持仓有卖出记录，单笔盈亏不单独列示（按均价法并入上方的未实现/已实现）。</div>` : "";
-    return `<div class="lots${r.sym === justExpanded ? " lots-in" : ""}"><table>
+    const descHtml = settings.geminiKey
+      ? `<div class="desc">${aiDesc[r.sym] ? esc(aiDesc[r.sym]) : "股票详解生成中…"}</div>`
+      : `<div class="desc" style="color:var(--muted)">股票详解未激活：用带 #h= 的魔法链接打开一次本页面即可（链接里带着 Gemini Key）。</div>`;
+    return `<div class="lots${r.sym === justExpanded ? " lots-in" : ""}">${descHtml}<table>
       <tr><th>日期</th><th style="text-align:left">操作</th><th>价格</th><th>股数</th><th>成本</th><th>盈亏</th></tr>
       ${rows}</table>${note}</div>`;
   }
@@ -1356,8 +1708,12 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
     if (!(price > 0)) { toast("价格要大于 0"); $("tPrice").focus(); return; }
     if (!(qty > 0)) { toast("数量要大于 0"); $("tQty").focus(); return; }
+    const tag = $("tTag").value.trim().replace(/\s+/g, "");
+    if (tag && (/^-?\d+(?:\.\d+)?$/.test(tag) || /^\d{1,4}[\/\-.]\d{1,2}[\/\-.]\d{1,4}$/.test(tag))) {
+      toast("板块不能是纯数字或日期"); $("tTag").focus(); return;
+    }
     const d = new Date();
-    const line = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}  ${sym}  ${price}  ${side === "sell" ? -qty : qty}`;
+    const line = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}  ${sym}  ${price}  ${side === "sell" ? -qty : qty}${tag ? "  " + tag : ""}`;
     holdingsText = (holdingsText.trim() ? holdingsText.replace(/\s+$/, "") + "\n" : "") + line;
     const ok = LS.set(K.holdings, holdingsText);
     toast(ok ? `已记录：${side === "sell" ? "卖出" : "买入"} ${sym} ${qty} 股 @ ${price}` : "保存失败：浏览器不允许本站存储");
