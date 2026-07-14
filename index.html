@@ -909,6 +909,15 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     throw new Error("no quote");
   }
 
+  // 美股可能有成交的时段(UTC 粗判, 留了冬夏令时余量): 工作日 08:00 → 次日 01:00
+  function usMarketActiveish() {
+    const d = new Date(), day = d.getUTCDay(), h = d.getUTCHours();
+    if (day === 0) return false;            // 周日
+    if (day === 6 && h >= 1) return false;  // 周六凌晨收摊后
+    if (day === 1 && h < 8) return false;   // 周一开市前
+    return h >= 8 || h < 1;
+  }
+
   /* ---- 盘前/盘后覆盖层: Yahoo 1 分钟线(includePrePost)取最新延时成交 ----
      Finnhub 免费档不含盘前(实测时间戳停在常规收盘); 仅对美股(无后缀)运行,
      kind 用 Yahoo 官方时段边界判定; 涨跌基准=最近一次常规收盘 */
@@ -926,6 +935,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       if (li < 0) return null;
       const tp = meta.currentTradingPeriod || {};
       const t = ts[li];
+      // 最后一笔成交超过 4 小时 = 该时段早已收摊(周末/深夜), 不覆盖:
+      // 页面回到干净的官方收盘价+全天涨幅, 不再挂"盘前/盘后"标
+      if (Date.now() / 1000 - t > 4 * 3600) return null;
       let kind = null;
       if (tp.pre && tp.regular && t >= tp.pre.start && t < tp.regular.start) kind = "盘前";
       else if (tp.post && t >= tp.post.start) kind = "盘后";
@@ -1081,7 +1093,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
         setTimeout(() => document.body.classList.remove("tick"), 900);
       }
       if (ok > 0) refreshSparks(syms); // 后台补 30 日走势, 不阻塞
-      refreshExtended(syms);           // 后台补盘前/盘后价, 不阻塞
+      if (usMarketActiveish()) refreshExtended(syms); // 只在美股有交易的时段拉盘前盘后, 休市/周末不空转烧额度
       ensureHist(curRange);            // 后台补回报率曲线历史, 不阻塞
       refreshEarnings(syms);           // 后台补财报日历, 不阻塞
       refreshAiSectors();              // 后台问 Gemini 补板块归类, 不阻塞
@@ -1101,10 +1113,11 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       if (m && m.price > 0 && (!q || !(q.price > 0) || (m.ts || 0) > (q.ts || 0))) {
         out[s] = { price: m.price, prevClose: null, currency: (q && q.currency) || CORE.inferCurrency(s), name: (q && q.name) || null, spark: (q && q.spark) || null, manual: true };
       } else if (q && q.price > 0) {
-        // 盘前/盘后覆盖: 15 分钟内取到的延时成交价优先, 涨跌基准换成最近常规收盘
+        // 盘前/盘后覆盖: 现价用延时成交价, 主涨幅保持"相对昨收的全天口径"(券商惯例),
+        // 盘前盘后自身的漂移放进 extPct 由小标单独展示
         const e = (q.ext && q.ext.price > 0 && now - (q.ext.at || 0) < 15 * 60 * 1000) ? q.ext : null;
         out[s] = e
-          ? { ...q, price: e.price, prevClose: e.prev > 0 ? e.prev : q.prevClose, ext: e.kind }
+          ? { ...q, price: e.price, ext: e.kind, extPct: e.prev > 0 ? (e.price - e.prev) / e.prev : null }
           : { ...q, stale: now - (q.ts || 0) > STALE };
       }
     }
@@ -1515,6 +1528,12 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
         if (j && typeof j.holdings === "string" && typeof j.updatedAt === "number"
           && j.updatedAt > lastLocalEdit && j.holdings.trim() !== holdingsText.trim()) {
           adoptCloud(j);
+        } else if (j === null && lastLocalEdit > 1) {
+          // 云端是空的(数据库重建过) → 本机真实记过账的设备负责把持仓补回云端
+          pushSync();
+        } else if (j && typeof j.updatedAt === "number" && j.updatedAt < lastLocalEdit) {
+          // 本机比云端新(比如云端服务中断期间记过账) → 反向补推, 不等下一次记账
+          pushSync();
         }
       }
     } catch {} finally { syncPulling = false; }
@@ -1749,7 +1768,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       const M = (v, o) => CORE.fmtMoney(v, cur, o);
       const hasQ = r.value != null;
       const priceHtml = hasQ
-        ? `${M(r.quote.price)}<button class="editp" data-manual="${esc(r.sym)}" aria-label="手动改价" title="手动改价">✎</button>${r.quote.ext ? ` <span class="manual-mark">${esc(r.quote.ext)}</span>` : ""}${r.quote.manual ? ' <span class="manual-mark">手动</span>' : ""}${r.quote.stale ? ' <span class="manual-mark">⚠︎旧</span>' : ""}<span class="sub ${pnlCls(r.dayPnl)}">${r.dayPct == null ? "" : arrow(r.dayPnl) + " " + P(r.dayPct)}</span>`
+        ? `${M(r.quote.price)}<button class="editp" data-manual="${esc(r.sym)}" aria-label="手动改价" title="手动改价">✎</button>${r.quote.ext ? ` <span class="manual-mark">${esc(r.quote.ext)}${r.quote.extPct != null ? " " + CORE.fmtPct(r.quote.extPct) : ""}</span>` : ""}${r.quote.manual ? ' <span class="manual-mark">手动</span>' : ""}${r.quote.stale ? ' <span class="manual-mark">⚠︎旧</span>' : ""}<span class="sub ${pnlCls(r.dayPnl)}">${r.dayPct == null ? "" : arrow(r.dayPnl) + " " + P(r.dayPct)}</span>`
         : `<button data-manual="${esc(r.sym)}" style="font-size:12px;padding:3px 8px">输入价格</button>`;
       const lotsHtml = expanded.has(r.sym) ? renderLots(r, cur) : "";
       const spark = r.quote && r.quote.spark;
