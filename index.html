@@ -1236,13 +1236,6 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
         `<div class="actions"><button class="primary" id="useImportBtn">用链接里的</button>` +
         `<button id="keepLocalBtn">保留本机的</button></div></div>`);
     }
-    if (pendingCloud != null) {
-      parts.push(
-        `<div class="banner">⚠️ 云端持仓（${lotCount(pendingCloud.holdings)} 笔交易）与本机（${lotCount(holdingsText)} 笔）相差较多，` +
-        `疑似有设备用旧数据覆盖过，已暂停自动同步。要怎么处理？` +
-        `<div class="actions"><button class="primary" id="mergeCloudBtn">合并两份（推荐）</button>` +
-        `<button id="useLocalBtn">只用本机的</button><button id="useCloudBtn">只用云端的</button></div></div>`);
-    }
     if (view.missing.length)
       parts.push(`<div class="banner">⚠️ ${view.missing.map(esc).join("、")} 暂无报价（未计入汇总）。点该行的「输入价格」可手动输入。</div>`);
     if (agg.warnings.length)
@@ -1257,22 +1250,6 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       refresh();
     };
     if (kl) kl.onclick = () => { pendingImport = null; try { history.replaceState(null, "", location.pathname + location.search); } catch {} render(); };
-    const mc = $("mergeCloudBtn"), ul = $("useLocalBtn"), uc = $("useCloudBtn");
-    if (mc) mc.onclick = () => {
-      const c = pendingCloud; pendingCloud = null;
-      holdingsText = mergeHoldings(holdingsText, c.holdings);
-      lastLocalEdit = Date.now();
-      LS.set(K.holdings, holdingsText); LS.set(K.holdts, lastLocalEdit);
-      toast("已合并两份持仓并回传云端");
-      pushSync(true); refresh();
-    };
-    if (ul) ul.onclick = () => {
-      pendingCloud = null;
-      lastLocalEdit = Date.now(); LS.set(K.holdts, lastLocalEdit);
-      toast("已保留本机持仓并回传云端");
-      pushSync(true); render();
-    };
-    if (uc) uc.onclick = () => { const c = pendingCloud; pendingCloud = null; applyCloud(c); };
   }
 
   function renderTiles(view) {
@@ -1526,9 +1503,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     } catch { return null; }
   }
   // 后写胜出的盲区: 一台久未同步的设备记一笔新账, 会带着新时间戳把旧持仓推上云端(2026-07-21 实翻过车)。
-  // 防护: 两份持仓的交易行数差 3 笔以上时不静默覆盖, 弹横幅让用户选或合并。
+  // 应用只增不删(唯一入口是"记一笔"), 所以同步一律取并集: 两边交易行合起来, 哪边都不丢, 全自动无需用户决策。
   function lotCount(t) { return String(t).split("\n").filter(l => l.trim() && !l.trim().startsWith("#")).length; }
-  function looksLossy(thin, thick) { const a = lotCount(thin), b = lotCount(thick); return b >= 5 && b - a >= 3; }
   // 并集合并: 以行数多的一份为底, 另一份里多出的交易行(按重复次数)补到末尾
   function mergeHoldings(a, b) {
     const [base, other] = lotCount(a) >= lotCount(b) ? [a, b] : [b, a];
@@ -1542,19 +1518,24 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
     return extra.length ? base.replace(/\s+$/, "") + "\n" + extra.join("\n") : base;
   }
-  let pendingCloud = null; // 与本机差距过大、等用户决断的云端版本
-
-  async function pushSync(force) {
+  async function pushSync(skipMerge) {
     const ep = syncEndpoint();
-    if (!ep || (pendingCloud && !force)) return;
+    if (!ep) return;
     try {
-      if (!force) { // 推送前先瞄一眼云端: 云端明显比本机厚 → 本机多半是旧数据, 停下来问
+      if (!skipMerge) { // 推送前先瞄一眼云端: 云端有本机没有的记录就先合进来, 绝不盲目覆盖
         try {
           const pre = await fetch(ep);
           if (pre.ok) {
             const c = await pre.json();
-            if (c && typeof c.holdings === "string" && looksLossy(holdingsText, c.holdings)) {
-              pendingCloud = c; render(); return;
+            if (c && typeof c.holdings === "string") {
+              const merged = mergeHoldings(c.holdings, holdingsText);
+              if (merged.trim() !== holdingsText.trim()) {
+                holdingsText = merged;
+                lastLocalEdit = Date.now();
+                LS.set(K.holdings, holdingsText); LS.set(K.holdts, lastLocalEdit);
+                toast("已自动合并另一台设备的记录");
+                refresh();
+              }
             }
           }
         } catch {}
@@ -1573,7 +1554,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   let syncPulling = false;
   async function pullSync() {
     const ep = syncEndpoint();
-    if (!ep || syncPulling || pendingCloud) return;
+    if (!ep || syncPulling) return;
     syncPulling = true;
     try {
       const r = await fetch(ep);
@@ -1593,15 +1574,14 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     } catch {} finally { syncPulling = false; }
   }
   function adoptCloud(j) {
-    if (looksLossy(j.holdings, holdingsText)) { pendingCloud = j; render(); return; } // 云端明显偏少 → 不静默覆盖
-    applyCloud(j);
-  }
-  function applyCloud(j) {
-    holdingsText = j.holdings;
-    lastLocalEdit = j.updatedAt;
+    const merged = mergeHoldings(j.holdings, holdingsText);
+    const extra = merged.trim() !== j.holdings.trim(); // 本机有云端缺的记录 → 合并后回传
+    holdingsText = merged;
+    lastLocalEdit = extra ? Date.now() : j.updatedAt;
     LS.set(K.holdings, holdingsText);
     LS.set(K.holdts, lastLocalEdit);
-    toast("已同步云端最新持仓");
+    toast(extra ? "已自动合并两台设备的记录" : "已同步云端最新持仓");
+    if (extra) pushSync(true);
     refresh();
   }
 
