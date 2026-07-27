@@ -744,8 +744,17 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     "8/7/2026   IAUM  40.4   50",
   ].join("\n");
 
+  // 2026-07-27 误录剔除: 这笔 MSTR 卖出是记账误点(实际没有卖)。并集合并的设计会让普通删除
+  // 在多设备之间复活, 所以按行黑名单剔除: 本机/云端/合并结果里见到一律丢弃, 各设备打开页面即自愈。
+  const BAD_LOTS = new Set(["27/7/2026 MSTR 99 -40"]);
+  const stripBadLots = t => String(t).split("\n").filter(l => !BAD_LOTS.has(l.trim().split(/\s+/).join(" "))).join("\n");
+
   let holdingsText = LS.get(K.holdings, null);
   if (typeof holdingsText !== "string") holdingsText = null;
+  if (holdingsText != null) {
+    const cleaned = stripBadLots(holdingsText);
+    if (cleaned !== holdingsText) { holdingsText = cleaned; LS.set(K.holdings, cleaned); }
+  }
   let lastLocalEdit = LS.get(K.holdts, 0);            // 本机持仓最后修改时间(云同步的后写胜出依据)
   if (typeof lastLocalEdit !== "number") lastLocalEdit = 0;
   let quotes = sanitizeQuotes(LS.get(K.quotes, {}));  // {SYM: {price, prevClose, currency, name, ts}}
@@ -1516,7 +1525,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       seen.set(t, (seen.get(t) || 0) + 1);
       if (seen.get(t) > (have.get(t) || 0)) extra.push(t);
     }
-    return extra.length ? base.replace(/\s+$/, "") + "\n" + extra.join("\n") : base;
+    return stripBadLots(extra.length ? base.replace(/\s+$/, "") + "\n" + extra.join("\n") : base);
   }
   async function pushSync(skipMerge) {
     const ep = syncEndpoint();
