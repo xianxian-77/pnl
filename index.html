@@ -117,6 +117,7 @@
   .heroNum { margin-top: 24px; }
   .heroNum .label { font-size: 11px; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
   .heroNum .heroSub { font-size: 13px; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .heroNum2 { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--hairline); }
   .s-decor {
     position: absolute; border: 1px solid var(--hairline); border-radius: 50%;
     aspect-ratio: 1; transform: translate(-50%, -50%); pointer-events: none;
@@ -532,11 +533,12 @@ const CORE = (() => {
     const warnings = [];
     for (const lot of sorted) {
       let p = bySym.get(lot.sym);
-      if (!p) { p = { sym: lot.sym, shares: 0, cost: 0, realized: 0, todayQty: 0, todayCost: 0, hasSells: false, sector: null, lots: [] }; bySym.set(lot.sym, p); }
+      if (!p) { p = { sym: lot.sym, shares: 0, cost: 0, buyCost: 0, realized: 0, todayQty: 0, todayCost: 0, hasSells: false, sector: null, lots: [] }; bySym.set(lot.sym, p); }
       if (lot.tag) p.sector = lot.tag; // 按时间序, 最新标签生效
       if (lot.qty > 0) {
         p.shares += lot.qty;
         p.cost += lot.qty * lot.price;
+        p.buyCost += lot.qty * lot.price; // 累计买入总额, 卖出不扣减 —— 算"总共投入过多少本金"用这个, 不用会随卖出缩水的 cost
         if (todayKey && lot.dateKey === todayKey) { p.todayQty += lot.qty; p.todayCost += lot.qty * lot.price; }
       } else {
         p.hasSells = true;
@@ -578,7 +580,7 @@ const CORE = (() => {
     const curOf = p => (quotes[p.sym] && quotes[p.sym].currency) || inferCurrency(p.sym);
     // totals 用无原型对象: 币种字符串来自网络, 防 "constructor" 之类命中 Object.prototype
     const totals = Object.create(null);
-    const bucket = cur => totals[cur] || (totals[cur] = { cost: 0, value: 0, unreal: 0, realized: 0, dayPnl: 0, prevValue: 0, valuedRows: 0, dayRows: 0 });
+    const bucket = cur => totals[cur] || (totals[cur] = { cost: 0, value: 0, unreal: 0, realized: 0, invested: 0, dayPnl: 0, prevValue: 0, valuedRows: 0, dayRows: 0 });
 
     const rows = [], flats = [], missing = [];
     for (const p of positions) {
@@ -610,15 +612,19 @@ const CORE = (() => {
       t.cost += r.cost; t.value += r.value; t.unreal += r.unreal; t.valuedRows++;
       if (r.dayPnl != null) { t.dayPnl += r.dayPnl; t.prevValue += r.dayBase; t.dayRows++; }
     }
-    // realized 累加(含已清仓), 每代码一次
+    // realized 累加(含已清仓), 每代码一次; invested 同理累加买入总额(不受卖出影响, 用作总回报率的分母)
     for (const p of [...rows, ...flats]) {
       if (Math.abs(p.realized) > 1e-9) bucket(p.cur).realized += p.realized;
+      if (p.buyCost > 0) bucket(p.cur).invested += p.buyCost;
     }
     for (const cur of Object.keys(totals)) {
       const t = totals[cur];
       t.unrealPct = t.cost > 0 ? t.unreal / t.cost : 0;
       t.dayPct = t.prevValue > 0 ? t.dayPnl / t.prevValue : null;
       t.dayPartial = t.valuedRows - t.dayRows; // 有市值但没进今日统计的行数
+      // 总盈亏 = 已实现 + 未实现(仅算有报价的持仓); 百分比对"总共投入过的本金"算, 不会因为卖出减仓而失真
+      t.totalPnl = t.unreal + t.realized;
+      t.totalPct = t.invested > 0 ? t.totalPnl / t.invested : null;
     }
     // 占比
     for (const r of rows) {
@@ -1276,18 +1282,18 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const main = curs[0], t = view.totals[main];
     const others = curs.slice(1);
     const M = (v, o) => CORE.fmtMoney(v, main, o), P = CORE.fmtPct;
-    const totalPnl = t.unreal + t.realized;
     const partial = t.dayPartial > 0 ? `，不含 ${t.dayPartial} 项` : "";
+    // "总盈亏(含波动)"已经在上方总市值下面单独占一块了(见 renderStructure 的 totalHero),
+    // 这里的已实现/未实现只列各自的分项, 不再重复给合计, 免得两处数字对不上眼
     const tiles = [
-      `<div class="tile"><div class="label">总盈亏（未实现）</div>
+      `<div class="tile"><div class="label">未实现盈亏（浮动）</div>
         <div class="value ${pnlCls(t.unreal)}">${dotText(M(t.unreal, { signed: true }), 4, true)}</div>
         <div class="delta ${pnlCls(t.unreal)}">${P(t.unrealPct)}</div></div>`,
       `<div class="tile"><div class="label">今日盈亏${view.rows.some(r => r.quote && r.quote.ext) ? "（含盘前后）" : ""}${t.dayPartial > 0 ? `（不含 ${t.dayPartial} 项）` : ""}</div>
         <div class="value ${pnlCls(t.dayPnl)}">${t.dayPct == null ? "—" : dotText(M(t.dayPnl, { signed: true }), 4, true)}</div>
         <div class="delta ${pnlCls(t.dayPnl)}">${t.dayPct == null ? "" : P(t.dayPct)}</div></div>`,
-      `<div class="tile"><div class="label">已实现盈亏</div>
-        <div class="value ${pnlCls(t.realized)}">${dotText(M(t.realized, { signed: true }), 4, true)}</div>
-        <div class="delta ${pnlCls(totalPnl)}">累计（含未实现）${M(totalPnl, { signed: true })}</div></div>`,
+      `<div class="tile"><div class="label">已实现盈亏（已落袋）</div>
+        <div class="value ${pnlCls(t.realized)}">${dotText(M(t.realized, { signed: true }), 4, true)}</div></div>`,
       `<div class="tile"><div class="label">总成本</div><div class="value">${dotText(M(t.cost), 4, true)}</div></div>`,
     ];
     // 其他币种各补一行小计
@@ -1317,7 +1323,10 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
         : t.dayPnl < 0 ? (a < 0.01 ? "微跌" : a < 0.03 ? "下跌" : "大跌") : "持平";
       s += `今日${w} <b class="${pnlCls(t.dayPnl)}">${CORE.fmtPct(a, false)}</b>，`;
     }
-    s += `累计${t.unreal >= 0 ? "浮盈" : "浮亏"} <b class="${pnlCls(t.unreal)}">${CORE.fmtPct(Math.abs(t.unrealPct), false)}</b>。`;
+    // 这句是全页第一眼看到的结论, 用"含已实现+波动"的总回报, 不能只报未实现浮盈亏(会漏掉已经落袋的部分)
+    s += t.totalPct != null
+      ? `累计${t.totalPnl >= 0 ? "盈利" : "亏损"} <b class="${pnlCls(t.totalPnl)}">${CORE.fmtPct(Math.abs(t.totalPct), false)}</b>（含已实现）。`
+      : `累计${t.unreal >= 0 ? "浮盈" : "浮亏"} <b class="${pnlCls(t.unreal)}">${CORE.fmtPct(Math.abs(t.unrealPct), false)}</b>。`;
     return s;
   }
 
@@ -1372,6 +1381,14 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const partial = t.dayPartial > 0 ? `，不含 ${t.dayPartial} 项` : "";
     const heroSub = t.dayPct == null ? ""
       : `<div class="heroSub ${pnlCls(t.dayPnl)}">${arrow(t.dayPnl)} 今日 ${CORE.fmtMoney(t.dayPnl, mainCur, { signed: true })}（${CORE.fmtPct(t.dayPct)}${partial}）</div>`;
+    // 用户最看重的数字: 从开始炒股到现在, 已实现+未实现合计赚/亏了多少 —— 放在总市值正下方同等醒目的位置,
+    // 不再只当成"已实现盈亏"卡片下面一行小字(以前太不显眼, 容易被当成没算波动)
+    const totalHero = t.totalPct == null ? "" : `
+        <div class="heroNum heroNum2">
+          <div class="label">总盈亏（含波动，已实现+未实现）</div>
+          <div class="heroVal ${pnlCls(t.totalPnl)}">${dotText(CORE.fmtMoney(t.totalPnl, mainCur, { signed: true }), 4.6, true)}</div>
+          <div class="heroSub ${pnlCls(t.totalPnl)}">${CORE.fmtPct(t.totalPct)} · 已实现 ${CORE.fmtMoney(t.realized, mainCur, { signed: true })} + 未实现 ${CORE.fmtMoney(t.unreal, mainCur, { signed: true })}</div>
+        </div>`;
     el.innerHTML = `
       <div class="s-left">
         <div class="s-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none"><g stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="3" x2="12" y2="21"/><line x1="4.2" y1="7.5" x2="19.8" y2="16.5"/><line x1="19.8" y1="7.5" x2="4.2" y2="16.5"/></g></svg></div>
@@ -1381,6 +1398,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
           <div class="heroVal">${dotText(CORE.fmtMoney(t.value, mainCur), 6.2, true)}</div>
           ${heroSub}
         </div>
+        ${totalHero}
         ${(aiBrief.dayKey === localDayKey() && aiBrief.text)
           ? `<p class="aibrief">${esc(aiBrief.text)}<span class="cap">GEMINI · 今日点评</span></p>` : ""}
       </div>
