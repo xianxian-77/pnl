@@ -204,6 +204,7 @@
 
   /* ---- 股票详解 ---- */
   .lots .desc { font-size: 13px; line-height: 1.75; color: var(--ink2); padding: 8px 0 10px; white-space: normal; max-width: 660px; }
+  .lots .desc a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 
   /* ---- 板块分布: 墨色堆叠条 ---- */
   .sectorWrap { margin-top: 4px; }
@@ -731,7 +732,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
     return out;
   }
-  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aidesc: "pt_aidesc", hist: "pt_hist", aibrief: "pt_aibrief", earn: "pt_earn", holdts: "pt_holdts" };
+  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aisectried: "pt_aisectried", aidesc: "pt_aidesc", hist: "pt_hist", aibrief: "pt_aibrief", earn: "pt_earn", holdts: "pt_holdts" };
 
   const EXAMPLE = [
     "# 格式: 日期 代码 买入价 股数   (# 开头是注释)",
@@ -769,8 +770,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   }
   let hist = asObj(LS.get(K.hist, {}));               // 历史日线 {档位: {SYM: {ts, cl, at}}}
   let curRange = "月";                                // 回报率曲线当前档位
-  let aiBrief = asObj(LS.get(K.aibrief, {}));         // AI 每日点评 {dayKey, text}
-  if (typeof aiBrief.text !== "string") aiBrief = {};
+  let aiBrief = asObj(LS.get(K.aibrief, {}));         // AI 每日点评 {dayKey, text, tries, lastTry}
+  if (typeof aiBrief.text !== "string") delete aiBrief.text; // 失败记录只留 dayKey/tries/lastTry, 供重试限流用
   const earn = {};                                    // 财报日历缓存 {SYM: {date:"YYYY-MM-DD", at}}
   for (const [k2, v2] of Object.entries(asObj(LS.get(K.earn, {})))) {
     if (v2 && typeof v2 === "object" && typeof v2.date === "string") earn[k2] = { date: v2.date, at: typeof v2.at === "number" ? v2.at : 0 };
@@ -1473,7 +1474,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
             && j.candidates[0].content.parts && j.candidates[0].content.parts[0]
             && j.candidates[0].content.parts[0].text) || null;
         }
-        if (r.status !== 503 && r.status !== 429) return null; // 非过载类错误不重试
+        if (r.status === 429) return null;  // 触到配额/频率上限, 再打只会更快烧完, 直接放弃
+        if (r.status !== 503) return null;  // 非过载类错误不重试
       } catch {}
       await new Promise(res => setTimeout(res, 4000 * (i + 1)));
     }
@@ -1487,10 +1489,13 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     try { return txt ? JSON.parse(txt) : null; } catch { return null; }
   }
 
-  /* ---- Gemini 股票详解: 首次展开该行时生成, 永久缓存 ---- */
-  const descBusy = new Set();
-  async function ensureDesc(sym) {
+  /* ---- Gemini 股票详解: 首次展开该行时生成一次, 之后永久吃缓存 ----
+     生成失败的代码记进 descFailed: 不再每次展开都白发一遍请求, 行内给个"重试"由用户决定。 */
+  const descBusy = new Set(), descFailed = new Set();
+  async function ensureDesc(sym, force) {
     if (aiDesc[sym] || descBusy.has(sym) || !settings.geminiKey) return;
+    if (descFailed.has(sym) && !force) return;
+    descFailed.delete(sym);
     descBusy.add(sym);
     try {
       const nm = (quotes[sym] && quotes[sym].name) || "";
@@ -1498,10 +1503,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       const clean = txt ? String(txt).trim().replace(/\s*\n+\s*/g, " ").slice(0, 320) : "";
       if (clean) {
         aiDesc[sym] = clean;
-        LS.set(K.aidesc, aiDesc);
-        render();
-      }
-    } finally { descBusy.delete(sym); }
+        if (!LS.set(K.aidesc, aiDesc)) toast("详解存不进本机，下次展开还得重新生成");
+      } else descFailed.add(sym);
+    } finally { descBusy.delete(sym); render(); }
   }
 
   /* ---- 云同步: 持仓存进自己的 Deno KV, 各设备后写胜出 ---- */
@@ -1594,12 +1598,17 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     refresh();
   }
 
-  /* ---- Gemini 每日组合点评: 每天只生成一次 ---- */
+  /* ---- Gemini 每日组合点评: 每天只生成一次 ----
+     页面每 5 分钟自动刷新一次, 而这里原先只在"已生成成功"时才跳过 —— 一旦生成失败就什么都不记,
+     于是每 5 分钟原样重来一遍, 一整天能白烧几百次额度。改成失败也落账: 每天最多试 3 次, 间隔 30 分钟。 */
+  const BRIEF_MAX_TRIES = 3, BRIEF_COOLDOWN = 30 * 60 * 1000;
   let briefBusy = false;
   async function refreshAiBrief() {
     if (briefBusy || !settings.geminiKey) return;
     const dk = localDayKey();
     if (aiBrief.dayKey === dk && aiBrief.text) return;
+    if (aiBrief.dayKey === dk && ((aiBrief.tries || 0) >= BRIEF_MAX_TRIES
+      || Date.now() - (aiBrief.lastTry || 0) < BRIEF_COOLDOWN)) return;
     const parsed = CORE.parseHoldings(holdingsText);
     const agg = CORE.aggregate(parsed.lots);
     const q = effectiveQuotes(agg.positions.map(p => p.sym));
@@ -1611,6 +1620,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     if (!rows.length || t.dayPct == null) return; // 有当日数据才值得点评
     briefBusy = true;
     try {
+      // 先把"这次尝试"落盘, 再去调 —— 失败/断网/关页面都不会让下一轮刷新立刻又打一次
+      aiBrief = { dayKey: dk, tries: (aiBrief.dayKey === dk ? (aiBrief.tries || 0) : 0) + 1, lastTry: Date.now() };
+      LS.set(K.aibrief, aiBrief);
       const lines = rows.map(r =>
         `${r.sym}(${sectorOf(r)}):占比${(r.alloc * 100).toFixed(0)}%,今日${r.dayPct == null ? "?" : (r.dayPct * 100).toFixed(1) + "%"},累计${(r.unrealPct * 100).toFixed(1)}%`).join("; ");
       const prompt = `你是克制的持仓观察助手。根据数据写今日组合点评：第一句说整体涨跌和主因，中间点名1-2只最值得注意的持仓，最后一句给一个观察角度。口语但冷静，不喊单不给买卖建议，不用感叹号，60-110字，直接输出正文不要开头语。数据：今日整体${(t.dayPct * 100).toFixed(2)}%，累计未实现${(t.unrealPct * 100).toFixed(1)}%；${lines}`;
@@ -1655,7 +1667,11 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     return ` <span class="earnchip${days <= 7 ? " soon" : ""}">财报 ${md}${days <= 7 ? "·" + (days === 0 ? "今天" : days + "天") : ""}</span>`;
   }
 
-  let aiSecBusy = false; const aiSecTried = new Set();
+  // 问过的代码持久化: 原先只记在内存里, 刷新一次页面就忘了 —— Gemini 归不出类的冷门代码
+  // (SPCX/IAUM 这种) 会在每次打开页面时被重新问一遍。落盘后就只问一次。
+  let aiSecBusy = false;
+  const aiSecTried = new Set((Array.isArray(LS.get(K.aisectried, [])) ? LS.get(K.aisectried, []) : [])
+    .filter(s => typeof s === "string" && s.length <= 12).slice(0, 200));
   async function refreshAiSectors() {
     if (aiSecBusy || !settings.geminiKey) return;
     const { positions } = CORE.aggregate(CORE.parseHoldings(holdingsText).lots);
@@ -1665,7 +1681,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     if (!need.length) return;
     aiSecBusy = true;
     try {
-      need.forEach(s => aiSecTried.add(s)); // 本次会话内失败也不再重复问
+      need.forEach(s => aiSecTried.add(s)); // 失败也不再重复问, 且跨会话记住
+      LS.set(K.aisectried, [...aiSecTried]);
       const map = await classifySectors(need);
       let got = 0;
       for (const [k2, v2] of Object.entries(map || {})) {
@@ -1862,6 +1879,13 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
         toggle(el);
       });
     });
+    // 详解生成失败后的手动重试(自动重发已停掉, 只在这里按需再来一次)
+    $("holdings").querySelectorAll("[data-redesc]").forEach(a => {
+      a.addEventListener("click", e => {
+        e.preventDefault(); e.stopPropagation();
+        ensureDesc(a.dataset.redesc, true);
+      });
+    });
   }
 
   function renderLots(r, cur) {
@@ -1884,7 +1908,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const note = (r.hasSells && price != null)
       ? `<div class="note">该持仓有卖出记录，单笔盈亏不单独列示（按均价法并入上方的未实现/已实现）。</div>` : "";
     const descHtml = settings.geminiKey
-      ? `<div class="desc">${aiDesc[r.sym] ? esc(aiDesc[r.sym]) : "股票详解生成中…"}</div>`
+      ? `<div class="desc">${aiDesc[r.sym] ? esc(aiDesc[r.sym])
+          : descFailed.has(r.sym) ? `详解没生成出来（AI 没响应）。<a href="#" data-redesc="${esc(r.sym)}">点这里重试</a>`
+          : "股票详解生成中…"}</div>`
       : `<div class="desc" style="color:var(--muted)">股票详解未激活：用带 #h= 的魔法链接打开一次本页面即可（链接里带着 Gemini Key）。</div>`;
     return `<div class="lots${r.sym === justExpanded ? " lots-in" : ""}">${descHtml}<table>
       <tr><th>日期</th><th style="text-align:left">操作</th><th>价格</th><th>股数</th><th>成本</th><th>盈亏</th></tr>
