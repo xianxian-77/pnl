@@ -751,9 +751,11 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     "8/7/2026   IAUM  40.4   50",
   ].join("\n");
 
-  // 2026-07-27 误录剔除: 这笔 MSTR 卖出是记账误点(实际没有卖)。并集合并的设计会让普通删除
-  // 在多设备之间复活, 所以按行黑名单剔除: 本机/云端/合并结果里见到一律丢弃, 各设备打开页面即自愈。
-  const BAD_LOTS = new Set(["27/7/2026 MSTR 99 -40"]);
+  // 误录剔除: 并集合并的设计会让普通删除在多设备之间复活, 所以按行黑名单剔除:
+  // 本机/云端/合并结果里见到一律丢弃, 各设备打开页面即自愈。
+  //   27/7/2026 MSTR 99 -40    记账误点(实际没有卖)
+  //   10/8/2026 APPL 306.8 28  代码打错(AAPL 打成 APPL), 正确的一行单独入账、不在黑名单里
+  const BAD_LOTS = new Set(["27/7/2026 MSTR 99 -40", "10/8/2026 APPL 306.8 28"]);
   const stripBadLots = t => String(t).split("\n").filter(l => !BAD_LOTS.has(l.trim().split(/\s+/).join(" "))).join("\n");
 
   let holdingsText = LS.get(K.holdings, null);
