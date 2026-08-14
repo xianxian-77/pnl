@@ -873,15 +873,21 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   }
 
   // 夜间静默窗(伦敦时间 21:50–次日09:00): 不自动拉行情/AI/同步, 省额度也少干烧电量的空转。
-  // 用 Intl 按 Europe/London 时区取当地小时分钟, 换季夏令时(BST/GMT)自动跟着走, 不用手改偏移量。
-  function londonMinutes() {
-    const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
-    const h = +parts.find(p => p.type === "hour").value, m = +parts.find(p => p.type === "minute").value;
-    return h * 60 + m;
+  // 用 Intl 按 Europe/London 时区取当地星期几+小时分钟, 换季夏令时(BST/GMT)自动跟着走, 不用手改偏移量。
+  function londonParts() {
+    const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
+    const get = t => parts.find(p => p.type === t).value;
+    return { day: get("weekday"), minutes: (+get("hour")) * 60 + (+get("minute")) };
   }
   function apiQuietHours() {
-    const t = londonMinutes();
-    return t >= 21 * 60 + 50 || t < 9 * 60; // 21:50 起 或 09:00 前
+    const { day, minutes: t } = londonParts();
+    const normallyQuiet = t >= 21 * 60 + 50 || t < 9 * 60; // 21:50 起 或 09:00 前
+    if (!normallyQuiet) return false;
+    // 周五晚场美股收盘后还有夜盘(after-hours), 夜盘收尾才算这周真正结束, 不该跟平时
+    // 一样 21:50 一到点就掐掉; 复用 usMarketActiveish()(按 UTC 周几+小时判断)看
+    // 夜盘是否还在走 —— 它本身已经把"周五夜盘拖到周六凌晨"这段算作活跃
+    if ((day === "Fri" || day === "Sat") && usMarketActiveish()) return false;
+    return true;
   }
 
   /* ---- 盘前/盘后覆盖层: Yahoo 1 分钟线(includePrePost)取最新延时成交 ----
