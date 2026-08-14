@@ -112,8 +112,6 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 14px; line-height: 1; margin-bottom: 16px; color: var(--ink);
   }
-  .statement { font-size: 27px; font-weight: 300; line-height: 1.42; color: var(--ink); letter-spacing: .002em; }
-  .statement b { font-weight: 700; }
   .heroNum { margin-top: 24px; }
   .heroNum .label { font-size: 11px; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
   .heroNum .heroSub { font-size: 13px; margin-top: 10px; font-variant-numeric: tabular-nums; }
@@ -178,27 +176,6 @@
   }
   @media (hover: hover) { .pc-col:hover .pc-bar { opacity: .75; } }
 
-  /* ---- 回报率曲线 ---- */
-  .rtabs { display: flex; gap: 6px; margin: 2px 0 12px; }
-  .rtab { font-size: 12px; padding: 4px 13px; border-radius: 999px; border: 1px solid var(--hairline); background: none; color: var(--ink2); cursor: pointer; }
-  .rtab.on { background: var(--pill); border-color: var(--pill); color: var(--pill-ink); }
-  .retsvg { display: block; width: 100%; height: auto; }
-  .retsvg .rzero { stroke: var(--hairline); stroke-width: 1; vector-effect: non-scaling-stroke; }
-  .retsvg .rline { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-  .retsvg .rline.pos { stroke: var(--pos); } .retsvg .rline.neg { stroke: var(--neg); }
-  .retsvg .rdot.pos { fill: var(--pos); } .retsvg .rdot.neg { fill: var(--neg); }
-  .retsvg .rbench { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
-  .retlast { font-size: 20px; font-weight: 650; margin-top: 8px; font-variant-numeric: tabular-nums; }
-  .retlast .retcap { display: block; font-size: 10.5px; font-weight: 400; letter-spacing: .06em; color: var(--muted); margin-top: 2px; }
-
-  /* ---- AI 每日点评 (海报首屏, 巨数下方) ---- */
-  .aibrief {
-    margin-top: 22px; max-width: 520px;
-    font-size: 14px; line-height: 1.8; color: var(--ink2);
-    border-left: 2px solid var(--ink); padding-left: 14px;
-  }
-  .aibrief .cap { display: block; font-size: 9.5px; letter-spacing: .14em; color: var(--muted); margin-top: 6px; }
-
   /* ---- 财报小标 ---- */
   .earnchip { color: var(--muted); letter-spacing: .02em; }
   .earnchip.soon { color: var(--accent); font-weight: 600; }
@@ -217,7 +194,6 @@
 
   /* ---- 宽屏横构图 ---- */
   @media (min-width: 1024px) {
-    .statement { font-size: 38px; }
     .heroNum { margin-top: 30px; }
     .mainCols { display: grid; grid-template-columns: 7fr 5fr; gap: 0 52px; align-items: start; }
     .pnlWrap { position: sticky; top: 12px; }
@@ -432,8 +408,6 @@
     <aside class="pnlWrap" id="pnlWrap" style="display:none">
       <div class="kicker">盈亏分布 <span class="en">P&amp;L BY HOLDING</span></div>
       <section class="pnlchart" id="pnlchart"></section>
-      <div class="kicker">回报率 <span class="en">RETURN</span></div>
-      <section class="retchart" id="retchart"></section>
     </aside>
   </div>
 
@@ -533,12 +507,12 @@ const CORE = (() => {
     const warnings = [];
     for (const lot of sorted) {
       let p = bySym.get(lot.sym);
-      if (!p) { p = { sym: lot.sym, shares: 0, cost: 0, buyCost: 0, realized: 0, todayQty: 0, todayCost: 0, hasSells: false, sector: null, lots: [] }; bySym.set(lot.sym, p); }
+      if (!p) { p = { sym: lot.sym, shares: 0, cost: 0, buyCost: 0, sellProceeds: 0, realized: 0, todayQty: 0, todayCost: 0, hasSells: false, sector: null, lots: [] }; bySym.set(lot.sym, p); }
       if (lot.tag) p.sector = lot.tag; // 按时间序, 最新标签生效
       if (lot.qty > 0) {
         p.shares += lot.qty;
         p.cost += lot.qty * lot.price;
-        p.buyCost += lot.qty * lot.price; // 累计买入总额, 卖出不扣减 —— 算"总共投入过多少本金"用这个, 不用会随卖出缩水的 cost
+        p.buyCost += lot.qty * lot.price; // 累计买入总额, 卖出不扣减
         if (todayKey && lot.dateKey === todayKey) { p.todayQty += lot.qty; p.todayCost += lot.qty * lot.price; }
       } else {
         p.hasSells = true;
@@ -549,6 +523,7 @@ const CORE = (() => {
         }
         const avg = p.shares > 0 ? p.cost / p.shares : 0;
         p.realized += q * (lot.price - avg);
+        p.sellProceeds += q * lot.price; // 卖出回款(含本金+利润), 净投入本金 = buyCost - sellProceeds, 滚仓(卖了再买)会自动抵消, 不会虚增
         p.shares -= q;
         p.cost = p.shares * avg;
         if (p.shares < 1e-9) { p.shares = 0; p.cost = 0; }
@@ -612,17 +587,19 @@ const CORE = (() => {
       t.cost += r.cost; t.value += r.value; t.unreal += r.unreal; t.valuedRows++;
       if (r.dayPnl != null) { t.dayPnl += r.dayPnl; t.prevValue += r.dayBase; t.dayRows++; }
     }
-    // realized 累加(含已清仓), 每代码一次; invested 同理累加买入总额(不受卖出影响, 用作总回报率的分母)
+    // realized 累加(含已清仓), 每代码一次; invested 用净投入本金(买入-卖出回款)
+    // 而不是累计买入总额 —— 滚仓(卖出后用回款接着买)会让"累计买入总额"越滚越大,
+    // 分母虚增会把百分比越滚越低, 净投入本金会随卖出正确抵消, 只反映真金白银放进去过多少
     for (const p of [...rows, ...flats]) {
       if (Math.abs(p.realized) > 1e-9) bucket(p.cur).realized += p.realized;
-      if (p.buyCost > 0) bucket(p.cur).invested += p.buyCost;
+      if (p.buyCost > 0 || p.sellProceeds > 0) bucket(p.cur).invested += p.buyCost - p.sellProceeds;
     }
     for (const cur of Object.keys(totals)) {
       const t = totals[cur];
       t.unrealPct = t.cost > 0 ? t.unreal / t.cost : 0;
       t.dayPct = t.prevValue > 0 ? t.dayPnl / t.prevValue : null;
       t.dayPartial = t.valuedRows - t.dayRows; // 有市值但没进今日统计的行数
-      // 总盈亏 = 已实现 + 未实现(仅算有报价的持仓); 百分比对"总共投入过的本金"算, 不会因为卖出减仓而失真
+      // 总盈亏 = 已实现 + 未实现(仅算有报价的持仓); 百分比对净投入本金算
       t.totalPnl = t.unreal + t.realized;
       t.totalPct = t.invested > 0 ? t.totalPnl / t.invested : null;
     }
@@ -632,44 +609,6 @@ const CORE = (() => {
       r.alloc = totals[r.cur].value > 0 ? r.value / totals[r.cur].value : 0;
     }
     return { rows, flats, totals, missing };
-  }
-
-  // ---- 组合回报率曲线 ----
-  // lots + 各代码日线 {SYM:{ts:[unix秒,升序], cl:[...]}} → {ts:[], pct:[]}
-  // 每个时点: 按 ≤当日 的交易重建持仓, 市值=各代码 ≤该时点 最近收盘 × 股数,
-  // 回报率=(市值-成本)/成本 (未实现口径, 与页面其余数字一致)
-  function tsDayKey(T) {
-    const d = new Date(T * 1000);
-    return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
-  }
-  function returnCurve(lots, hist) {
-    const syms = Object.keys(hist).filter(s => hist[s] && Array.isArray(hist[s].ts) && hist[s].ts.length > 0);
-    if (!syms.length || !lots.length) return { ts: [], pct: [] };
-    let base = syms[0];
-    for (const s of syms) if (hist[s].ts.length > hist[base].ts.length) base = s;
-    const ptr = {};
-    syms.forEach(s => ptr[s] = 0);
-    const out = { ts: [], pct: [] };
-    for (const T of hist[base].ts) {
-      const dk = tsDayKey(T);
-      const held = aggregate(lots.filter(l => l.dateKey <= dk)).positions.filter(p => p.shares > 0);
-      if (!held.length) continue;
-      let value = 0, cost = 0, ok = true;
-      for (const p of held) {
-        const h = hist[p.sym];
-        if (!h || !h.ts.length) { ok = false; break; }
-        let i = ptr[p.sym];
-        while (i + 1 < h.ts.length && h.ts[i + 1] <= T) i++;
-        ptr[p.sym] = i;
-        if (h.ts[i] > T) { ok = false; break; } // 该代码此时还没有数据
-        value += h.cl[i] * p.shares;
-        cost += p.cost;
-      }
-      if (!ok || !(cost > 0)) continue;
-      out.ts.push(T);
-      out.pct.push((value - cost) / cost);
-    }
-    return out;
   }
 
   // ---- 格式化 ----
@@ -694,7 +633,7 @@ const CORE = (() => {
     return round6(v).toLocaleString("en-US", { maximumFractionDigits: 6 });
   }
 
-  return { parseDate, parseHoldings, aggregate, computeView, returnCurve, inferCurrency, fmtMoney, fmtPct, fmtShares };
+  return { parseDate, parseHoldings, aggregate, computeView, inferCurrency, fmtMoney, fmtPct, fmtShares };
 })();
 if (typeof module !== "undefined" && module.exports) module.exports = CORE;
 /* ===CORE-END=== */
@@ -738,7 +677,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
     return out;
   }
-  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aisectried: "pt_aisectried", aidesc: "pt_aidesc", hist: "pt_hist", aibrief: "pt_aibrief", earn: "pt_earn", holdts: "pt_holdts" };
+  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aisectried: "pt_aisectried", aidesc: "pt_aidesc", earn: "pt_earn", holdts: "pt_holdts" };
 
   const EXAMPLE = [
     "# 格式: 日期 代码 买入价 股数   (# 开头是注释)",
@@ -776,10 +715,6 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   for (const [k2, v2] of Object.entries(asObj(LS.get(K.aidesc, {})))) {
     if (typeof v2 === "string" && v2.length > 0 && v2.length <= 400) aiDesc[k2] = v2;
   }
-  let hist = asObj(LS.get(K.hist, {}));               // 历史日线 {档位: {SYM: {ts, cl, at}}}
-  let curRange = "月";                                // 回报率曲线当前档位
-  let aiBrief = asObj(LS.get(K.aibrief, {}));         // AI 每日点评 {dayKey, text, tries, lastTry}
-  if (typeof aiBrief.text !== "string") delete aiBrief.text; // 失败记录只留 dayKey/tries/lastTry, 供重试限流用
   const earn = {};                                    // 财报日历缓存 {SYM: {date:"YYYY-MM-DD", at}}
   for (const [k2, v2] of Object.entries(asObj(LS.get(K.earn, {})))) {
     if (v2 && typeof v2 === "object" && typeof v2.date === "string") earn[k2] = { date: v2.date, at: typeof v2.at === "number" ? v2.at : 0 };
@@ -1007,58 +942,6 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     } finally { extBusy = false; }
   }
 
-  /* ---- 回报率曲线的历史日线: 分档拉取, 半天缓存; SPY 作大盘基准一并拉 ---- */
-  const RANGES = { "周": "interval=1d&range=5d", "月": "interval=1d&range=1mo", "年": "interval=1d&range=1y", "总": "interval=1wk&range=max" };
-  const BENCH = "SPY";
-  async function tryHist(wrap, yUrl) {
-    try {
-      let j = JSON.parse(await fetchText(wrap(yUrl)));
-      if (j && typeof j.contents === "string") j = JSON.parse(j.contents);
-      const res = j && j.chart && j.chart.result && j.chart.result[0];
-      if (!res) return null;
-      const ts = res.timestamp;
-      const cl = res.indicators && res.indicators.quote && res.indicators.quote[0] && res.indicators.quote[0].close;
-      if (!Array.isArray(ts) || !Array.isArray(cl)) return null;
-      const div = res.meta && res.meta.currency === "GBp" ? 100 : 1; // 便士归一
-      const ots = [], ocl = [];
-      for (let i = 0; i < ts.length; i++)
-        if (typeof cl[i] === "number" && cl[i] > 0) { ots.push(ts[i]); ocl.push(Math.round(cl[i] / div * 10000) / 10000); }
-      return ots.length >= 2 ? { ts: ots, cl: ocl } : null;
-    } catch { return null; }
-  }
-  async function fetchHist(sym, params) {
-    const yUrl = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?" + params;
-    if (/^https:\/\//.test(settings.customProxy || "")) {
-      const h = await tryHist(u => settings.customProxy + encodeURIComponent(u), yUrl);
-      if (h) return h;
-    }
-    for (let i = 0; i < PROXIES.length; i++) {
-      const idx = (stickyProxy + i) % PROXIES.length;
-      const h = await tryHist(PROXIES[idx], yUrl);
-      if (h) { stickyProxy = idx; LS.set(K.proxy, idx); return h; }
-    }
-    return null;
-  }
-  const histBusy = new Set();
-  async function ensureHist(rk) {
-    const params = RANGES[rk];
-    if (!params || histBusy.has(rk)) return;
-    const { positions } = CORE.aggregate(CORE.parseHoldings(holdingsText).lots);
-    const bucket = asObj(hist[rk]);
-    const now = Date.now(), TTL = 12 * 3600 * 1000;
-    const need = [...new Set(positions.filter(p => p.shares > 0).map(p => p.sym).concat([BENCH]))]
-      .filter(s => { const e = bucket[s]; return !(e && now - (e.at || 0) < TTL && Array.isArray(e.ts)); });
-    if (!need.length) return;
-    histBusy.add(rk);
-    try {
-      const rs = await Promise.allSettled(need.map(s => fetchHist(s, params)));
-      let got = 0;
-      rs.forEach((r, i) => {
-        if (r.status === "fulfilled" && r.value) { bucket[need[i]] = { ts: r.value.ts, cl: r.value.cl, at: Date.now() }; got++; }
-      });
-      if (got) { hist[rk] = bucket; LS.set(K.hist, hist); render(); }
-    } finally { histBusy.delete(rk); }
-  }
 
   // 后台补 sparkline (Finnhub 路径无历史; 不阻塞行情刷新, 半天补一次)
   let sparksBusy = false;
@@ -1125,10 +1008,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       }
       if (ok > 0) refreshSparks(syms); // 后台补 30 日走势, 不阻塞
       if (usMarketActiveish()) refreshExtended(syms); // 只在美股有交易的时段拉盘前盘后, 休市/周末不空转烧额度
-      ensureHist(curRange);            // 后台补回报率曲线历史, 不阻塞
       refreshEarnings(syms);           // 后台补财报日历, 不阻塞
       refreshAiSectors();              // 后台问 Gemini 补板块归类, 不阻塞
-      if (ok > 0) refreshAiBrief();    // 每天首次拿到行情后生成 AI 点评
       if (pendingRefresh) { pendingRefresh = false; refresh(); }
     }
   }
@@ -1248,7 +1129,6 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     renderSectorBar(view);
     renderHoldings(view, q);
     renderPnlChart(view);
-    renderReturnCurve(parsed);
 
     const tsList = Object.values(quotes).map(x => x.ts || 0).filter(Boolean);
     if (tsList.length) {
@@ -1297,7 +1177,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const others = curs.slice(1);
     const M = (v, o) => CORE.fmtMoney(v, main, o), P = CORE.fmtPct;
     const partial = t.dayPartial > 0 ? `，不含 ${t.dayPartial} 项` : "";
-    // "总盈亏(含波动)"已经在上方总市值下面单独占一块了(见 renderStructure 的 totalHero),
+    // "总盈亏(含波动)"已经在顶部单独占一块了(见 renderStructure 的 totalHero),
     // 这里的已实现/未实现只列各自的分项, 不再重复给合计, 免得两处数字对不上眼
     const tiles = [
       `<div class="tile"><div class="label">未实现盈亏（浮动）</div>
@@ -1308,7 +1188,6 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
         <div class="delta ${pnlCls(t.dayPnl)}">${t.dayPct == null ? "" : P(t.dayPct)}</div></div>`,
       `<div class="tile"><div class="label">已实现盈亏（已落袋）</div>
         <div class="value ${pnlCls(t.realized)}">${dotText(M(t.realized, { signed: true }), 4, true)}</div></div>`,
-      `<div class="tile"><div class="label">总成本</div><div class="value">${dotText(M(t.cost), 4, true)}</div></div>`,
     ];
     // 其他币种各补一行小计
     for (const c of others) {
@@ -1320,30 +1199,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     $("tiles").innerHTML = tiles.join("");
   }
 
-  /* ---- 主视觉: 编辑体结论 + 巨型总市值 + 毛玻璃渐变球 ----
+  /* ---- 主视觉: 毛玻璃渐变球 + 总盈亏(含波动) ----
      只呈现主币种(市值最大的那个桶): 占比是分币种算的, 混币种会把
-     "某外币里的 100%" 当成全组合最大仓, 球径和结论全错 */
-  function buildStatement(view) {
-    const curs = Object.keys(view.totals).sort((a, b) => view.totals[b].value - view.totals[a].value);
-    if (!curs.length) return "";
-    const rows = view.rows.filter(r => r.value != null && r.cur === curs[0]);
-    if (!rows.length) return "";
-    const t = view.totals[curs[0]];
-    const top = rows[0];
-    let s = `<b>${rows.length}</b> 只持仓，<b>${esc(top.sym)}</b> 占 <b>${(top.alloc * 100).toFixed(0)}%</b>；`;
-    if (t.dayPct != null) {
-      const a = Math.abs(t.dayPct);
-      const w = t.dayPnl > 0 ? (a < 0.01 ? "微涨" : a < 0.03 ? "上涨" : "大涨")
-        : t.dayPnl < 0 ? (a < 0.01 ? "微跌" : a < 0.03 ? "下跌" : "大跌") : "持平";
-      s += `今日${w} <b class="${pnlCls(t.dayPnl)}">${CORE.fmtPct(a, false)}</b>，`;
-    }
-    // 这句是全页第一眼看到的结论, 用"含已实现+波动"的总回报, 不能只报未实现浮盈亏(会漏掉已经落袋的部分)
-    s += t.totalPct != null
-      ? `累计${t.totalPnl >= 0 ? "盈利" : "亏损"} <b class="${pnlCls(t.totalPnl)}">${CORE.fmtPct(Math.abs(t.totalPct), false)}</b>（含已实现）。`
-      : `累计${t.unreal >= 0 ? "浮盈" : "浮亏"} <b class="${pnlCls(t.unreal)}">${CORE.fmtPct(Math.abs(t.unrealPct), false)}</b>。`;
-    return s;
-  }
-
+     "某外币里的 100%" 当成全组合最大仓, 球径全错 */
   // 海报画布槽位: 桌面文案在左 → 球群偏右; 手机文案占中带 → 球群贴上下边
   const ORB_SLOTS = [[62, 40], [80, 66], [58, 12], [88, 24], [46, 84], [70, 6], [30, 88], [93, 50]];
   const ORB_SLOTS_M = [[72, 16], [28, 84], [48, 8], [88, 32], [16, 20], [78, 90], [48, 92], [90, 64]];
@@ -1372,7 +1230,6 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       }]);
     }
     const t = view.totals[mainCur];
-    const others = curs.slice(1);
     const maxA = Math.max(...rows.map(r => r.alloc));
     const slots = window.innerWidth < 640 ? ORB_SLOTS_M : ORB_SLOTS;
     const RMAX = window.innerWidth < 640 ? 18 : 13; // 最大球半径 (% 首屏画布宽)
@@ -1392,11 +1249,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
           <div class="cap">${esc(r.sym)} 占比</div></div>`);
       }
     });
-    const partial = t.dayPartial > 0 ? `，不含 ${t.dayPartial} 项` : "";
-    const heroSub = t.dayPct == null ? ""
-      : `<div class="heroSub ${pnlCls(t.dayPnl)}">${arrow(t.dayPnl)} 今日 ${CORE.fmtMoney(t.dayPnl, mainCur, { signed: true })}（${CORE.fmtPct(t.dayPct)}${partial}）</div>`;
-    // 用户最看重的数字: 从开始炒股到现在, 已实现+未实现合计赚/亏了多少 —— 放在总市值正下方同等醒目的位置,
-    // 不再只当成"已实现盈亏"卡片下面一行小字(以前太不显眼, 容易被当成没算波动)
+    // 已经落袋多少 + 今天动了多少 —— 只留这两个跟"本金算多少"无关的绝对数字,
+    // 总市值/占比结论句/总成本这些依赖本金基准的数字滚仓后会失真, 已经去掉了
     const totalHero = t.totalPct == null ? "" : `
         <div class="heroNum heroNum2">
           <div class="label">总盈亏（含波动，已实现+未实现）</div>
@@ -1406,15 +1260,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     el.innerHTML = `
       <div class="s-left">
         <div class="s-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none"><g stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="3" x2="12" y2="21"/><line x1="4.2" y1="7.5" x2="19.8" y2="16.5"/><line x1="19.8" y1="7.5" x2="4.2" y2="16.5"/></g></svg></div>
-        <p class="statement">${buildStatement(view)}</p>
-        <div class="heroNum">
-          <div class="label">总市值${others.length ? "（" + esc(mainCur) + "，另有 " + esc(others.join("/")) + " 持仓未并入）" : ""}</div>
-          <div class="heroVal">${dotText(CORE.fmtMoney(t.value, mainCur), 6.2, true)}</div>
-          ${heroSub}
-        </div>
         ${totalHero}
-        ${(aiBrief.dayKey === localDayKey() && aiBrief.text)
-          ? `<p class="aibrief">${esc(aiBrief.text)}<span class="cap">GEMINI · 今日点评</span></p>` : ""}
       </div>
       <div class="s-field">
         <div class="s-decor" style="left:64%;top:50%;width:56%"></div>
@@ -1631,40 +1477,6 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     refresh();
   }
 
-  /* ---- Gemini 每日组合点评: 每天只生成一次 ----
-     页面每 5 分钟自动刷新一次, 而这里原先只在"已生成成功"时才跳过 —— 一旦生成失败就什么都不记,
-     于是每 5 分钟原样重来一遍, 一整天能白烧几百次额度。改成失败也落账: 每天最多试 3 次, 间隔 30 分钟。 */
-  const BRIEF_MAX_TRIES = 3, BRIEF_COOLDOWN = 30 * 60 * 1000;
-  let briefBusy = false;
-  async function refreshAiBrief() {
-    if (briefBusy || !settings.geminiKey) return;
-    const dk = localDayKey();
-    if (aiBrief.dayKey === dk && aiBrief.text) return;
-    if (aiBrief.dayKey === dk && ((aiBrief.tries || 0) >= BRIEF_MAX_TRIES
-      || Date.now() - (aiBrief.lastTry || 0) < BRIEF_COOLDOWN)) return;
-    const parsed = CORE.parseHoldings(holdingsText);
-    const agg = CORE.aggregate(parsed.lots);
-    const q = effectiveQuotes(agg.positions.map(p => p.sym));
-    const view = CORE.computeView(agg.positions, q);
-    const curs = Object.keys(view.totals).sort((a, b) => view.totals[b].value - view.totals[a].value);
-    if (!curs.length) return;
-    const t = view.totals[curs[0]];
-    const rows = view.rows.filter(r => r.value != null && r.cur === curs[0]);
-    if (!rows.length || t.dayPct == null) return; // 有当日数据才值得点评
-    briefBusy = true;
-    try {
-      // 先把"这次尝试"落盘, 再去调 —— 失败/断网/关页面都不会让下一轮刷新立刻又打一次
-      aiBrief = { dayKey: dk, tries: (aiBrief.dayKey === dk ? (aiBrief.tries || 0) : 0) + 1, lastTry: Date.now() };
-      LS.set(K.aibrief, aiBrief);
-      const lines = rows.map(r =>
-        `${r.sym}(${sectorOf(r)}):占比${(r.alloc * 100).toFixed(0)}%,今日${r.dayPct == null ? "?" : (r.dayPct * 100).toFixed(1) + "%"},累计${(r.unrealPct * 100).toFixed(1)}%`).join("; ");
-      const prompt = `你是克制的持仓观察助手。根据数据写今日组合点评：第一句说整体涨跌和主因，中间点名1-2只最值得注意的持仓，最后一句给一个观察角度。口语但冷静，不喊单不给买卖建议，不用感叹号，60-110字，直接输出正文不要开头语。数据：今日整体${(t.dayPct * 100).toFixed(2)}%，累计未实现${(t.unrealPct * 100).toFixed(1)}%；${lines}`;
-      const txt = await geminiText(prompt);
-      const clean = txt ? String(txt).trim().replace(/\s*\n+\s*/g, " ").slice(0, 220) : "";
-      if (clean) { aiBrief = { dayKey: dk, text: clean }; LS.set(K.aibrief, aiBrief); render(); }
-    } finally { briefBusy = false; }
-  }
-
   /* ---- 财报日历: Finnhub 免费接口, 每代码缓存一天 ---- */
   let earnBusy = false;
   async function refreshEarnings(syms) {
@@ -1800,60 +1612,6 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     </svg>`;
   }
 
-  /* ---- 回报率曲线: 周/月/年/总 四档, 组合未实现回报率 ---- */
-  function renderReturnCurve(parsed) {
-    const box = $("retchart");
-    const bucket = asObj(hist[curRange]);
-    const h2 = {};
-    for (const [s, v] of Object.entries(bucket))
-      if (v && Array.isArray(v.ts) && Array.isArray(v.cl) && v.ts.length === v.cl.length) h2[s] = { ts: v.ts, cl: v.cl };
-    const rc = CORE.returnCurve(parsed.lots, h2);
-    const tabs = `<div class="rtabs">` + Object.keys(RANGES).map(k =>
-      `<button class="rtab${k === curRange ? " on" : ""}" data-r="${k}">${k}</button>`).join("") + `</div>`;
-    let chart;
-    if (rc.ts.length >= 2) {
-      // SPY 基准: 与组合曲线同一时间窗, 以窗口首日为 0 归一
-      let bench = null;
-      const bh = bucket[BENCH];
-      if (bh && Array.isArray(bh.ts) && bh.ts.length) {
-        const bp = [];
-        let bi = 0, base = null, okAll = true;
-        for (const T of rc.ts) {
-          while (bi + 1 < bh.ts.length && bh.ts[bi + 1] <= T) bi++;
-          if (bh.ts[bi] > T) { okAll = false; break; }
-          if (base == null) base = bh.cl[bi];
-          bp.push(bh.cl[bi] / base - 1);
-        }
-        if (okAll && bp.length === rc.ts.length) bench = bp;
-      }
-      const W = 320, H = 130, P = 8;
-      const all = bench ? rc.pct.concat(bench) : rc.pct;
-      let mn = Math.min(0, ...all), mx = Math.max(0, ...all);
-      if (mx - mn < 1e-9) { mx += 0.01; mn -= 0.01; }
-      const X = i => P + i * (W - 2 * P) / (rc.pct.length - 1);
-      const Y = v => P + (mx - v) * (H - 2 * P) / (mx - mn);
-      const pts = rc.pct.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
-      const bpts = bench ? bench.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ") : "";
-      const last = rc.pct[rc.pct.length - 1];
-      const bLast = bench ? bench[bench.length - 1] : null;
-      chart = `<svg class="retsvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${curRange}回报率曲线，组合 ${CORE.fmtPct(last)}${bLast == null ? "" : "，SPY " + CORE.fmtPct(bLast)}">
-          <line class="rzero" x1="${P}" y1="${Y(0).toFixed(1)}" x2="${W - P}" y2="${Y(0).toFixed(1)}"/>
-          ${bench ? `<polyline class="rbench" points="${bpts}" fill="none"/>` : ""}
-          <polyline class="rline ${last >= 0 ? "pos" : "neg"}" points="${pts}" fill="none" pathLength="1"/>
-          <circle class="rdot ${last >= 0 ? "pos" : "neg"}" cx="${X(rc.pct.length - 1).toFixed(1)}" cy="${Y(last).toFixed(1)}" r="3.2"/>
-        </svg>
-        <div class="retlast ${pnlCls(last)}">${CORE.fmtPct(last)}
-          <span class="retcap">未实现回报率 · ${curRange}${bLast == null ? "" : ` · 同期 SPY（虚线）${CORE.fmtPct(bLast)}，${last >= bLast ? "跑赢" : "跑输"} ${CORE.fmtPct(Math.abs(last - bLast), false)}`}</span></div>`;
-    } else {
-      chart = `<div class="hint" style="padding:26px 0">${Object.keys(h2).length ? "该区间数据点不足" : "正在取历史数据…（公共代理偶尔要等一会）"}</div>`;
-    }
-    box.innerHTML = tabs + chart;
-    box.querySelectorAll(".rtab").forEach(b => b.addEventListener("click", () => {
-      curRange = b.dataset.r;
-      ensureHist(curRange);
-      render();
-    }));
-  }
 
   function renderHoldings(view, q) {
     if (!view.rows.length && !view.flats.length) { $("holdings").innerHTML = ""; $("holdings").style.display = "none"; return; }
