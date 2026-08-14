@@ -937,6 +937,18 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     return h >= 8 || h < 1;
   }
 
+  // 夜间静默窗(伦敦时间 21:50–次日09:00): 不自动拉行情/AI/同步, 省额度也少干烧电量的空转。
+  // 用 Intl 按 Europe/London 时区取当地小时分钟, 换季夏令时(BST/GMT)自动跟着走, 不用手改偏移量。
+  function londonMinutes() {
+    const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
+    const h = +parts.find(p => p.type === "hour").value, m = +parts.find(p => p.type === "minute").value;
+    return h * 60 + m;
+  }
+  function apiQuietHours() {
+    const t = londonMinutes();
+    return t >= 21 * 60 + 50 || t < 9 * 60; // 21:50 起 或 09:00 前
+  }
+
   /* ---- 盘前/盘后覆盖层: Yahoo 1 分钟线(includePrePost)取最新延时成交 ----
      Finnhub 免费档不含盘前(实测时间戳停在常规收盘); 仅对美股(无后缀)运行,
      kind 用 Yahoo 官方时段边界判定; 涨跌基准=最近一次常规收盘 */
@@ -1514,6 +1526,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   const descBusy = new Set(), descFailed = new Set();
   async function ensureDesc(sym, force) {
     if (aiDesc[sym] || descBusy.has(sym) || !settings.geminiKey) return;
+    if (apiQuietHours() && !force) return; // 夜间静默: 不主动生成, 手动点"重试"仍可强制(force=true)穿透
     if (descFailed.has(sym) && !force) return;
     descFailed.delete(sym);
     descBusy.add(sym);
@@ -1930,7 +1943,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const descHtml = settings.geminiKey
       ? `<div class="desc">${aiDesc[r.sym] ? esc(aiDesc[r.sym])
           : descFailed.has(r.sym) ? `详解没生成出来（AI 没响应）。<a href="#" data-redesc="${esc(r.sym)}">点这里重试</a>`
-          : "股票详解生成中…"}</div>`
+          : (apiQuietHours() ? `夜间静默时段（伦敦 21:50–09:00）不主动生成。<a href="#" data-redesc="${esc(r.sym)}">仍要现在生成</a>`
+          : "股票详解生成中…")}</div>`
       : `<div class="desc" style="color:var(--muted)">股票详解未激活：用带 #h= 的魔法链接打开一次本页面即可（链接里带着 Gemini Key）。</div>`;
     return `<div class="lots${r.sym === justExpanded ? " lots-in" : ""}">${descHtml}<table>
       <tr><th>日期</th><th style="text-align:left">操作</th><th>价格</th><th>股数</th><th>成本</th><th>盈亏</th></tr>
@@ -1967,7 +1981,10 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
   }
 
-  $("refreshBtn").onclick = refresh;
+  $("refreshBtn").onclick = () => {
+    if (apiQuietHours()) { toast("夜间静默时段（伦敦 21:50–09:00）不拉取行情，白天会自动恢复"); return; }
+    refresh();
+  };
 
   /* ---- 记一笔: 表单 → 按今天日期追加一行 ---- */
   function recordTrade(side) {
@@ -1990,10 +2007,10 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const ok = LS.set(K.holdings, holdingsText);
     lastLocalEdit = Date.now();
     LS.set(K.holdts, lastLocalEdit);
-    pushSync(); // 推到云端, 其他设备打开即见
+    pushSync(); // 推到云端, 其他设备打开即见 —— 记账和同步任何时候都不受夜间静默限制
     toast(ok ? `已记录：${side === "sell" ? "卖出" : "买入"} ${sym} ${qty} 股 @ ${price}` : "保存失败：浏览器不允许本站存储");
     $("tPrice").value = ""; $("tQty").value = ""; // 代码留着, 方便连续记
-    refresh();
+    if (!apiQuietHours()) refresh(); // 顺手拉一下新价; 夜间静默就不请求了, 交易已经记上了, 价格等白天自动补
   }
   $("buyBtn").onclick = () => recordTrade("buy");
   $("sellBtn").onclick = () => recordTrade("sell");
@@ -2066,13 +2083,17 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   window.addEventListener("resize", () => { clearTimeout(rsT); rsT = setTimeout(render, 180); });
 
   render();      // 先用缓存/手动价即时渲染
-  pullSync();    // 拉云端持仓(若比本机新则采纳并自动刷新)
-  refresh();     // 再拉最新行情
+  if (!apiQuietHours()) {
+    pullSync();  // 拉云端持仓(若比本机新则采纳并自动刷新)
+    refresh();   // 再拉最新行情
+  }
 
   // 自动刷新: 页面可见时每 5 分钟; 切回页面且行情 >2 分钟旧时刷一次
-  setInterval(() => { if (!document.hidden) { pullSync(); refresh(); } }, 5 * 60 * 1000);
+  // 夜间静默(伦敦 21:50–09:00)期间整段跳过, 定时器照常转, 一过 9 点最多 5 分钟内自动补上
+  setInterval(() => { if (!document.hidden && !apiQuietHours()) { pullSync(); refresh(); } }, 5 * 60 * 1000);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
+    if (apiQuietHours()) return; // 夜间静默: 只用缓存渲染, 不发任何请求
     pullSync(); // 切回页面先对一次云端持仓
     const tsList = Object.values(quotes).map(x => x.ts || 0);
     const newest = tsList.length ? Math.max(...tsList) : 0;
