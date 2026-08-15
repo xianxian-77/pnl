@@ -10,258 +10,314 @@
 <title>持仓盈亏</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
 <style>
-  /* 视觉语言: 米白纸面(始终) / 编辑排版(发丝线分栏, 无卡片盒) / 点阵数字 / 黑药丸按钮 / 单一橙红强调 */
+  /* ── 视觉语言 ────────────────────────────────────────────────────────────
+     米白纸面 · 编辑排版(发丝线分栏, 不用卡片盒) · 点阵数字 · 墨色药丸按钮
+     色板按 Radix 的 12 阶分工组织: 1-2 底色 / 3-5 组件 / 6-8 描边 / 9 实心 / 11-12 文字。
+     关键: 文字色和实心色必须分开取 —— 旧版红 #c93a2e 在米白底上只有 4.16:1, 正文不达标。 */
   :root {
     color-scheme: light;
-    --page: #ede9e0; --surface: #f5f1e9;
-    --ink: #141412; --ink2: #4f4d47; --muted: #6e6b62;
-    --hairline: #d8d3c7; --rule: #141412;
-    --red: #c93a2e; --green: #006300;   /* 验证过: 米白底上 ΔE 16.9, 对比 ≥3:1 */
-    --accent: #e8502f; --accent-ink: #141412;
-    --pill: #141412; --pill-ink: #f5f1e9;
-    --meter-track: #d8d3c7; --meter-fill: #141412;
-    --ht: rgba(20,20,18,.35);
-    --wash: rgba(20,20,18,.035);
-    --flash: rgba(232,80,47,.16);
-    --border: rgba(20,20,18,.12);
+    /* 1-2 底色 */
+    --bg: #ece8df;  --bg-raised: #f4f0e7;
+    /* 3-5 组件底(常态/悬停/按下) */
+    --el: #e5e0d5;  --el-hover: #ded8ca;  --el-active: #d5cebd;
+    /* 6-8 描边(静态/可交互/焦点环) */
+    --line: #d6d0c2;  --line-strong: #bdb5a2;  --focus: #8f8672;
+    /* 9 实心 / 11 弱文字 / 12 主文字 */
+    --solid: #8a8271;  --text-dim: #6d685d;  --text-2: #57534a;  --text: #191713;
+    --rule: #191713;                       /* 编辑排版的粗正文线 */
+    /* 涨跌: 11 阶给文字(≥4.5:1), 9 阶给实心色块 */
+    --up-text: #b02a1c;   --up-solid: #cf4536;    /* 实测 5.38:1 */
+    --down-text: #14603a; --down-solid: #1d7a4c;  /* 实测 6.21:1 */
+    --accent: #b0431f;
+    --pill: #191713; --pill-ink: #f4f0e7;
+    --wash: rgba(25,23,19,.035);
+    --flash: rgba(176,67,31,.14);
+    /* 字号阶梯 */
+    --t-xs: 10.5px; --t-sm: 12px; --t-base: 13.5px; --t-md: 15px;
+    --t-lg: 19px; --t-xl: 25px;
+    /* 间距阶梯(4px 基) */
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+    /* 动效: Emil 的原则 —— 一律 ≤300ms + ease-out, 只动 transform/opacity */
+    --ease: cubic-bezier(.16,.84,.44,1);
+    --fast: .14s; --mid: .22s; --slow: .3s;
   }
   /* 涨跌语义色: 默认红涨绿跌(中文习惯); body.green-up 反转 */
-  body            { --pos: var(--red);   --neg: var(--green); }
-  body.green-up   { --pos: var(--green); --neg: var(--red);   }
+  body          { --pos: var(--up-text);   --neg: var(--down-text);
+                  --pos-solid: var(--up-solid);   --neg-solid: var(--down-solid); }
+  body.green-up { --pos: var(--down-text); --neg: var(--up-text);
+                  --pos-solid: var(--down-solid); --neg-solid: var(--up-solid); }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body {
-    background: var(--page); color: var(--ink);
+    background: var(--bg); color: var(--text);
     font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    font-size: 15px; line-height: 1.45;
+    font-size: var(--t-md); line-height: 1.45;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     overflow-x: clip;
   }
-  /* 设计师网页版心: 宽幅, 桌面横构图, 只有手机才竖排 */
-  main { max-width: 1440px; margin: 0 auto; padding: 12px clamp(16px, 4vw, 56px) 56px; position: relative; }
+  main { max-width: 1280px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 48px) var(--s7); position: relative; }
+  .pos { color: var(--pos); }
+  .neg { color: var(--neg); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .dotnum { display: block; max-width: 100%; height: auto; }
+  .sym .dotnum, .wordmark .dotnum { display: inline-block; vertical-align: middle; }
+  /* 通用小标签: 全站统一的"字段名"样式 */
+  .eyebrow, .tile .label { font-size: var(--t-xs); letter-spacing: .1em; color: var(--text-dim); font-weight: 500; }
 
+  /* ── 报头 ─────────────────────────────────────────────────────────── */
   header {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 20px 2px 16px; flex-wrap: wrap;
-    border-bottom: 1.5px solid var(--rule); /* 报头下的粗正文线, 编辑排版的锚 */
+    display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+    padding: var(--s5) 2px var(--s3); flex-wrap: wrap;
+    border-bottom: 1.5px solid var(--rule);
   }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .mark {
-    width: 36px; height: 36px; background: var(--ink); border-radius: 10px;
-    position: relative; flex: none;
-  }
+  .brand { display: flex; align-items: center; gap: var(--s3); }
+  .mark { width: 32px; height: 32px; background: var(--text); border-radius: 9px; position: relative; flex: none; }
   .mark::before, .mark::after {
     content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-    background: var(--page); border-radius: 1.5px;
+    background: var(--bg); border-radius: 1.5px;
   }
-  .mark::before { width: 18px; height: 5px; }
-  .mark::after { width: 5px; height: 18px; }
-  header h1 { font-size: 19px; font-weight: 700; letter-spacing: -.01em; line-height: 1.15; }
-  .wordmark { color: var(--muted); margin-top: 3px; }
-  .hdr-right { display: flex; align-items: center; gap: 10px; }
-  #updated { font-size: 12px; color: var(--muted); }
+  .mark::before { width: 16px; height: 4px; }
+  .mark::after { width: 4px; height: 16px; }
+  header h1 { font-size: 17px; font-weight: 700; letter-spacing: -.01em; line-height: 1.15; }
+  .wordmark { color: var(--text-dim); margin-top: 3px; }
+  .hdr-right { display: flex; align-items: center; gap: var(--s3); }
+  #updated { font-size: var(--t-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
   button {
-    font: inherit; font-size: 14px; color: var(--ink); background: transparent;
-    border: 1px solid var(--border); border-radius: 999px;
+    font: inherit; font-size: var(--t-base); color: var(--text); background: transparent;
+    border: 1px solid var(--line-strong); border-radius: 999px;
     padding: 7px 16px; cursor: pointer; touch-action: manipulation;
+    transition: opacity var(--fast) var(--ease), transform var(--fast) var(--ease);
   }
-  button:active { opacity: .7; }
-  button.primary { background: var(--pill); border-color: var(--pill); color: var(--pill-ink); }
-  button:disabled { opacity: .5; cursor: default; }
-  #refreshBtn { background: var(--pill); border-color: var(--pill); color: var(--pill-ink); font-weight: 600; }
+  button:active { transform: scale(.97); opacity: .8; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary, #refreshBtn { background: var(--pill); border-color: var(--pill); color: var(--pill-ink); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
   #refreshBtn.loading::after { content: "…"; }
 
   .banner {
-    border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline);
-    padding: 10px 2px; margin-top: 10px; font-size: 13px; color: var(--ink2);
+    border-bottom: 1px solid var(--line);
+    padding: var(--s3) 2px; font-size: var(--t-base); color: var(--text-2);
   }
-  .banner .actions { margin-top: 8px; display: flex; gap: 8px; }
+  .banner .actions { margin-top: var(--s2); display: flex; gap: var(--s2); }
 
-  /* ---- 统计条: 竖发丝线分栏, 无盒 ---- */
-  .tiles {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    border-top: 1.5px solid var(--rule); border-bottom: 1px solid var(--hairline);
-  }
-  .tile { padding: 16px 18px 16px 0; min-width: 0; }
-  .tile:not(:first-child) { border-left: 1px solid var(--hairline); padding-left: 18px; }
-  .tile .label { font-size: 11px; letter-spacing: .08em; color: var(--muted); margin-bottom: 9px; }
-  .tile .value { font-size: 21px; font-weight: 650; letter-spacing: -.01em; overflow-wrap: anywhere; }
-  .tile.hero { grid-column: 1 / -1; border-left: none; }
-  .tile .delta { font-size: 12.5px; margin-top: 8px; font-variant-numeric: tabular-nums; }
-  .pos { color: var(--pos); }
-  .neg { color: var(--neg); }
-
-  /* 点阵数字 (SVG, fill=currentColor 继承涨跌色) */
-  .dotnum { display: block; max-width: 100%; height: auto; }
-  .sym .dotnum, .wordmark .dotnum { display: inline-block; vertical-align: middle; }
-
-  /* ---- 海报首屏: 渐变球铺满第一屏做画布, 巨数与结论浮在其上, 统计条钉在折线处 ---- */
-  .structure {
-    position: relative; overflow: hidden;
-    /* 占满首屏但设上限: 超高窗口下海报不许被拉成两屏 */
-    min-height: max(500px, min(calc(100svh - 250px), 880px));
-    display: flex; align-items: center;
-    padding: 24px 0;
-  }
-  .s-left { position: relative; z-index: 1; max-width: 640px; padding-right: 16px; }
-  .s-field { position: absolute; inset: 0; z-index: 0; }
+  /* ── 首屏: 数字为主角, 球群作陪衬 ──────────────────────────────────────
+     旧版把渐变球做成满屏画布, 手机上要滑过 460px 才看得到第一个数字。
+     现在数字永远在最前, 球群在桌面占右半、在手机压到 200px 放到数字之后。 */
+  .hero { position: relative; padding: var(--s6) 0 var(--s5); }
+  /* width:100% 是必须的: 不给宽度时 flex 会把它缩到内容宽(实测只剩 323px), 巨数就失去主角体量了 */
+  .hero-main { position: relative; z-index: 1; width: 100%; max-width: 620px; min-width: 0; }
   .s-mark {
-    width: 30px; height: 30px; border: 1.5px solid var(--ink); border-radius: 50%;
+    width: 26px; height: 26px; border: 1.5px solid var(--text); border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 14px; line-height: 1; margin-bottom: 16px; color: var(--ink);
+    font-size: 13px; line-height: 1; margin-bottom: var(--s4); color: var(--text);
   }
-  .heroNum { margin-top: 24px; }
-  .heroNum .label { font-size: 11px; letter-spacing: .08em; color: var(--muted); margin-bottom: 10px; }
-  .heroNum .heroSub { font-size: 13px; margin-top: 10px; font-variant-numeric: tabular-nums; }
-  .heroNum2 { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--hairline); }
-  .s-decor {
-    position: absolute; border: 1px solid var(--hairline); border-radius: 50%;
-    aspect-ratio: 1; transform: translate(-50%, -50%); pointer-events: none;
+  /* L1 主数字: 全页最大, 一眼定位 */
+  .hero-fig { margin: var(--s2) 0 var(--s3); }
+  .hero-fig .dotnum { width: min(100%, 460px); }
+  .hero-meta { font-size: var(--t-base); color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .hero-meta b { font-weight: 650; }
+  .hero-meta .sep { color: var(--line-strong); margin: 0 var(--s2); }
+  /* L2 本周/今日: 并排两栏, 竖发丝线分隔 */
+  .hero-splits {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    margin-top: var(--s5); border-top: 1px solid var(--line); max-width: 420px;
   }
+  .split { padding: var(--s4) var(--s4) 0 0; }
+  .split + .split { border-left: 1px solid var(--line); padding-left: var(--s4); }
+  .split-fig { font-size: var(--t-xl); font-weight: 650; letter-spacing: -.02em;
+               font-variant-numeric: tabular-nums; margin-top: var(--s2); line-height: 1.1; }
+  .split-sub { font-size: var(--t-sm); margin-top: var(--s1); font-variant-numeric: tabular-nums; }
+  .split-note { font-size: var(--t-xs); color: var(--text-dim); margin-top: 2px; }
+
+  /* 球群画布 */
+  .s-field { position: absolute; inset: 0 0 0 46%; z-index: 0; pointer-events: none; }
+  .s-field .orb { pointer-events: auto; }
+  .s-decor { position: absolute; border: 1px solid var(--line); border-radius: 50%;
+             aspect-ratio: 1; transform: translate(-50%, -50%); pointer-events: none; }
   /* 命中区(按钮)固定不动, 视觉层(orb-vis)单独做模糊/漂浮/入场 —
      动画若挂在按钮上, 球会在光标下方来回移动导致 hover 反复进出 → 爆闪 */
-  .orb {
-    position: absolute; aspect-ratio: 1;
-    transform: translate(-50%, -50%); cursor: pointer;
-    border: none; padding: 0; background: none;
-  }
-  .orb::after { content: ""; position: absolute; inset: -14%; border-radius: 50%; } /* 扩大点击热区 */
+  .orb { position: absolute; aspect-ratio: 1; transform: translate(-50%, -50%);
+         cursor: pointer; border: none; padding: 0; background: none; }
+  .orb::after { content: ""; position: absolute; inset: -14%; border-radius: 50%; }
   .orb:focus-visible { outline: none; }
-  .orb-vis {
-    display: block; width: 100%; height: 100%; border-radius: 50%;
-    filter: blur(6px); transition: filter .25s ease; pointer-events: none;
-  }
-  .orb-vis.pos-orb { background: radial-gradient(circle at 44% 40%, var(--pos) 0%, color-mix(in srgb, var(--pos) 55%, transparent) 44%, transparent 71%); }
-  .orb-vis.neg-orb { background: radial-gradient(circle at 44% 40%, var(--neg) 0%, color-mix(in srgb, var(--neg) 55%, transparent) 44%, transparent 71%); }
-  .orb-vis.flat-orb { background: radial-gradient(circle at 44% 40%, var(--muted) 0%, color-mix(in srgb, var(--muted) 55%, transparent) 44%, transparent 71%); }
+  .orb-vis { display: block; width: 100%; height: 100%; border-radius: 50%;
+             filter: blur(6px); transition: filter var(--mid) var(--ease); pointer-events: none; }
+  .orb-vis.pos-orb  { background: radial-gradient(circle at 44% 40%, var(--pos-solid) 0%, color-mix(in srgb, var(--pos-solid) 55%, transparent) 44%, transparent 71%); }
+  .orb-vis.neg-orb  { background: radial-gradient(circle at 44% 40%, var(--neg-solid) 0%, color-mix(in srgb, var(--neg-solid) 55%, transparent) 44%, transparent 71%); }
+  .orb-vis.flat-orb { background: radial-gradient(circle at 44% 40%, var(--solid) 0%, color-mix(in srgb, var(--solid) 55%, transparent) 44%, transparent 71%); }
   .orb:focus-visible .orb-vis { filter: blur(5px) saturate(1.35); }
-  /* callout 位置渲染后实测再定 (首屏纵横比随窗口变, 不能按固定比例估), 定位前不可见 */
-  .callout { position: absolute; transform: translateX(-50%); text-align: center; pointer-events: none; white-space: nowrap; z-index: 2; visibility: hidden; }
-  .callout .pct { font-size: 21px; font-weight: 650; letter-spacing: -.01em; }
-  .callout .pctsign { font-size: 12px; font-weight: 600; vertical-align: super; }
-  .callout .cap { font-size: 10px; letter-spacing: .06em; color: var(--muted); margin-top: 1px; }
+  /* callout 位置渲染后实测再定(首屏纵横比随窗口变), 定位前不可见 */
+  .callout { position: absolute; transform: translateX(-50%); text-align: center;
+             pointer-events: none; white-space: nowrap; z-index: 2; visibility: hidden; }
+  .callout .pct { font-size: var(--t-lg); font-weight: 650; letter-spacing: -.01em; }
+  .callout .pctsign { font-size: var(--t-sm); font-weight: 600; vertical-align: super; }
+  .callout .cap { font-size: var(--t-xs); letter-spacing: .06em; color: var(--text-dim); margin-top: 1px; }
   .chart-tip {
     position: absolute; transform: translate(-50%, -130%);
-    background: var(--pill); color: var(--pill-ink); font-size: 12px;
+    background: var(--pill); color: var(--pill-ink); font-size: var(--t-sm);
     padding: 5px 11px; border-radius: 999px; white-space: nowrap; pointer-events: none; z-index: 5;
   }
-  @media (max-width: 639.98px) {
-    .structure { min-height: max(460px, min(calc(100svh - 330px), 700px)); }
-    .callout { display: none; } /* 手机中带全是文案, 占比数字由结论句和明细表承载 */
+
+  /* ── L3 统计条: 已实现/未实现 ─────────────────────────────────────── */
+  .tiles {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    border-top: 1.5px solid var(--rule); border-bottom: 1px solid var(--line);
   }
-  /* 滚动进场: 折线下的区块滑入 (类由 JS 在支持 IntersectionObserver 且未减少动态时添加) */
-  .reveal { opacity: 0; transform: translateY(26px); transition: opacity .7s cubic-bezier(.2, .7, .3, 1), transform .7s cubic-bezier(.2, .7, .3, 1); }
-  .reveal.inview { opacity: 1; transform: none; }
+  .tile { padding: var(--s4) var(--s4) var(--s4) 0; min-width: 0; }
+  .tile:not(:first-child) { border-left: 1px solid var(--line); padding-left: var(--s4); }
+  .tile .label { display: block; margin-bottom: var(--s2); }
+  .tile .value { font-size: var(--t-lg); font-weight: 650; letter-spacing: -.01em; overflow-wrap: anywhere; }
+  .tile.hero { grid-column: 1 / -1; border-left: none; padding: var(--s4) 0; }
+  .tile .delta { font-size: var(--t-sm); margin-top: var(--s2); font-variant-numeric: tabular-nums; color: var(--text-dim); }
 
-  /* ---- 盈亏分布: 渐隐柱 (盈利向上/亏损向下, 方向+颜色双编码) ---- */
-  /* 柱子有 50px 保底宽(百分比文字不叠压), 塞不下时容器横向滑动 */
-  .pc-cols { display: flex; gap: 10px; align-items: stretch; height: 240px; padding-top: 8px; overflow-x: auto; scrollbar-width: thin; }
-  .pc-col {
-    flex: 1 0 50px; max-width: 64px; min-width: 0; display: grid; grid-template-rows: 1fr auto 1fr;
-    cursor: pointer; border: none; background: none; padding: 0; font: inherit; color: inherit;
-  }
-  .pc-col:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .pc-half { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-height: 0; }
-  .pc-half.pc-down { justify-content: flex-start; }
-  .pc-bar { display: block; width: 100%; border-radius: 2px; }
-  .pc-bar.pc-pos { background: linear-gradient(to top, var(--pos) 4%, transparent 96%); transform-origin: bottom; }
-  .pc-bar.pc-neg { background: linear-gradient(to bottom, var(--neg) 4%, transparent 96%); transform-origin: top; }
-  .pc-val { font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 3px 0; }
-  .pc-lab {
-    font-size: 9.5px; letter-spacing: .08em; color: var(--muted); text-align: center;
-    padding: 6px 2px; border-top: 1px solid var(--hairline);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  @media (hover: hover) { .pc-col:hover .pc-bar { opacity: .75; } }
-
-  /* ---- 财报小标 ---- */
-  .earnchip { color: var(--muted); letter-spacing: .02em; }
-  .earnchip.soon { color: var(--accent); font-weight: 600; }
-
-  /* ---- 股票详解 ---- */
-  .lots .desc { font-size: 13px; line-height: 1.75; color: var(--ink2); padding: 8px 0 10px; white-space: normal; max-width: 660px; }
-  .lots .desc a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-
-  /* ---- 板块分布: 墨色堆叠条 ---- */
-  .sectorWrap { margin-top: 4px; }
+  /* ── 板块分布 ─────────────────────────────────────────────────────── */
+  .sectorWrap { margin-top: var(--s5); }
   .sec-bar { display: flex; gap: 2px; height: 14px; border-radius: 3px; overflow: hidden; }
-  .sec-bar .seg { display: block; height: 100%; background: var(--ink); min-width: 3px; }
-  .sec-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 12px; color: var(--ink2); }
-  .sleg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--ink); margin-right: 6px; vertical-align: -1px; }
-  .sleg b { font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .sec-bar .seg { display: block; height: 100%; background: var(--text); min-width: 3px; }
+  .sec-legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5); margin-top: var(--s3); font-size: var(--t-sm); color: var(--text-2); }
+  .sleg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--text); margin-right: 6px; vertical-align: -1px; }
+  .sleg b { font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
 
-  /* ---- 宽屏横构图 ---- */
-  @media (min-width: 1024px) {
-    .heroNum { margin-top: 30px; }
-    .mainCols { display: grid; grid-template-columns: 7fr 5fr; gap: 0 52px; align-items: start; }
-    .pnlWrap { position: sticky; top: 12px; }
-    .pc-cols { height: 300px; }
-  }
-
-  /* ---- holdings: 开放式列表, 发丝行线 ---- */
-  .holdings { margin-bottom: 26px; }
+  /* ── 区块小标题 ───────────────────────────────────────────────────── */
   .kicker {
-    display: flex; align-items: baseline; gap: 10px;
-    padding: 26px 2px 8px; font-size: 12.5px; font-weight: 700; letter-spacing: .02em;
+    display: flex; align-items: baseline; gap: var(--s3);
+    padding: var(--s6) 2px var(--s2); font-size: var(--t-base); font-weight: 700; letter-spacing: .01em;
   }
-  .kicker .en { font-weight: 400; font-size: 10px; letter-spacing: .14em; color: var(--muted); }
+  .kicker .en { font-weight: 400; font-size: var(--t-xs); letter-spacing: .14em; color: var(--text-dim); }
+
+  /* ── 持仓明细 ─────────────────────────────────────────────────────── */
+  .holdings { margin-bottom: var(--s5); }
   .hrow-head, .hrow {
-    display: grid; align-items: center; gap: 4px 10px;
-    padding: 12px 2px;
+    display: grid; align-items: center; gap: var(--s1) var(--s3);
+    padding: var(--s3) 2px;
     grid-template-columns: minmax(84px, 1.1fr) 84px 1fr .75fr .75fr 1fr 1fr;
   }
-  .hrow-head { font-size: 11px; letter-spacing: .07em; color: var(--muted); border-top: 1.5px solid var(--rule); border-bottom: 1px solid var(--hairline); padding: 8px 2px; }
-  .hrow { border-bottom: 1px solid var(--hairline); cursor: pointer; touch-action: manipulation; }
+  .hrow-head { font-size: var(--t-xs); letter-spacing: .07em; color: var(--text-dim);
+               border-top: 1.5px solid var(--rule); border-bottom: 1px solid var(--line); padding: var(--s2) 2px; }
+  .hrow { border-bottom: 1px solid var(--line); cursor: pointer; touch-action: manipulation;
+          transition: background-color var(--fast) var(--ease); }
   .hrow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .hrow:last-child { border-bottom: none; }
   .hrow > div { min-width: 0; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
   .sym { font-weight: 650; }
-  .sym .name { display: block; font-size: 11px; color: var(--muted); font-weight: 400;
+  .sym .name { display: block; font-size: var(--t-xs); color: var(--text-dim); font-weight: 400;
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sub { display: block; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .price-cell .manual-mark { font-size: 11px; color: var(--muted); white-space: nowrap; display: inline-block; }
-  .editp {
-    font-size: 12px; line-height: 1; padding: 6px 7px; margin-left: 4px;
-    border: none; background: none; color: var(--muted); vertical-align: baseline;
-  }
-  .meter { height: 4px; border-radius: 2px; background: var(--meter-track); margin-top: 4px; overflow: hidden; }
-  .meter > i { display: block; height: 100%; background: var(--meter-fill); border-radius: 2px; transform-origin: left; }
-
-  /* 30 日走势 sparkline */
+  .sub { display: block; font-size: var(--t-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .price-cell .manual-mark { font-size: var(--t-xs); color: var(--text-dim); white-space: nowrap; display: inline-block; }
+  .editp { font-size: var(--t-sm); line-height: 1; padding: 6px 7px; margin-left: 4px;
+           border: none; background: none; color: var(--text-dim); vertical-align: baseline; }
+  .meter { height: 4px; border-radius: 2px; background: var(--el); margin-top: 4px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; background: var(--text); border-radius: 2px; transform-origin: left; }
   .c-spark { min-width: 0; }
   .spark { display: block; overflow: visible; }
-  .spark polyline { stroke: var(--ink2); opacity: .7; }
+  .spark polyline { stroke: var(--text-2); opacity: .7; }
   .spark circle { fill: currentColor; }
   .c-spark.pos { color: var(--pos); }
   .c-spark.neg { color: var(--neg); }
+  .earnchip { color: var(--text-dim); letter-spacing: .02em; }
+  .earnchip.soon { color: var(--accent); font-weight: 600; }
 
-  .lots { grid-column: 1 / -1; padding: 4px 0 6px; font-size: 13px; color: var(--ink2); cursor: default;
-          overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .lots { grid-column: 1 / -1; padding: var(--s1) 0 var(--s2); font-size: var(--t-base); color: var(--text-2);
+          cursor: default; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .lots table { width: 100%; border-collapse: collapse; }
   .lots td, .lots th { white-space: nowrap; }
-  .lots .note { font-size: 11.5px; color: var(--muted); margin-top: 4px; white-space: normal; }
-  .lots th { font-weight: 400; color: var(--muted); font-size: 11.5px; text-align: right; padding: 3px 6px; }
+  .lots .note { font-size: var(--t-sm); color: var(--text-dim); margin-top: 4px; white-space: normal; }
+  .lots th { font-weight: 400; color: var(--text-dim); font-size: var(--t-sm); text-align: right; padding: 3px 6px; }
   .lots th:first-child, .lots td:first-child { text-align: left; }
-  .lots td { padding: 3px 6px; text-align: right; font-variant-numeric: tabular-nums; border-top: 1px solid var(--hairline); }
-  .lots .sell td { color: var(--muted); }
+  .lots td { padding: 3px 6px; text-align: right; font-variant-numeric: tabular-nums; border-top: 1px solid var(--line); }
+  .lots .sell td { color: var(--text-dim); }
+  .lots .desc { font-size: var(--t-base); line-height: 1.75; color: var(--text-2);
+                padding: var(--s2) 0 var(--s3); white-space: normal; max-width: 660px; }
+  .lots .desc a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+  .flat-note { font-size: var(--t-sm); color: var(--text-dim); padding: var(--s2) 2px; border-top: 1px solid var(--line); }
 
-  /* mobile: card layout */
+  /* ── 盈亏分布: 渐隐柱(盈利向上/亏损向下, 方向+颜色双编码) ──────────── */
+  /* 柱子有 50px 保底宽(百分比文字不叠压), 塞不下时容器横向滑动 */
+  .pc-cols { display: flex; gap: var(--s3); align-items: stretch; height: 240px; padding-top: var(--s2);
+             overflow-x: auto; scrollbar-width: thin; }
+  .pc-col { flex: 1 0 50px; max-width: 64px; min-width: 0; display: grid; grid-template-rows: 1fr auto 1fr;
+            cursor: pointer; border: none; background: none; padding: 0; font: inherit; color: inherit; }
+  .pc-col:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pc-half { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-height: 0; }
+  .pc-half.pc-down { justify-content: flex-start; }
+  .pc-bar { display: block; width: 100%; border-radius: 2px; transition: opacity var(--fast) var(--ease); }
+  .pc-bar.pc-pos { background: linear-gradient(to top, var(--pos-solid) 4%, transparent 96%); transform-origin: bottom; }
+  .pc-bar.pc-neg { background: linear-gradient(to bottom, var(--neg-solid) 4%, transparent 96%); transform-origin: top; }
+  .pc-val { font-size: var(--t-xs); font-variant-numeric: tabular-nums; white-space: nowrap; padding: 3px 0; }
+  .pc-lab { font-size: var(--t-xs); letter-spacing: .08em; color: var(--text-dim); text-align: center;
+            padding: 6px 2px; border-top: 1px solid var(--line);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ── 记一笔 ───────────────────────────────────────────────────────── */
+  .tradeWrap { margin-top: var(--s6); border-top: 1.5px solid var(--rule); }
+  .trade { display: flex; gap: var(--s4); align-items: flex-end; flex-wrap: wrap; margin-top: var(--s1); }
+  .trade label { display: flex; flex-direction: column; gap: 6px; font-size: var(--t-sm); color: var(--text-dim);
+                 flex: 1; min-width: 140px; max-width: 260px; }
+  .trade input {
+    font: inherit; font-size: 16px; /* iOS Safari 对 <16px 的输入框聚焦时会强制放大页面 */
+    color: var(--text); background: var(--bg-raised);
+    border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 12px; width: 100%;
+    transition: border-color var(--fast) var(--ease);
+  }
+  .trade input:focus { outline: none; border-color: var(--text); }
+  .trade-btns { display: flex; gap: var(--s3); padding-bottom: 1px; }
+  #sellBtn { border-color: var(--text); }
+  .hint { font-size: var(--t-sm); color: var(--text-dim); margin: var(--s2) 0; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%) translateY(8px);
+    background: var(--pill); color: var(--pill-ink); font-size: var(--t-base);
+    padding: 9px 18px; border-radius: 999px; opacity: 0; pointer-events: none;
+    transition: opacity var(--mid) var(--ease), transform var(--mid) var(--ease);
+    max-width: 86vw; z-index: 20;
+  }
+  .toast.show { opacity: .96; transform: translateX(-50%) translateY(0); }
+
+  /* ── 宽屏横构图 ───────────────────────────────────────────────────── */
+  @media (min-width: 900px) {
+    .hero { min-height: 420px; display: flex; align-items: center; }
+    .pc-cols { height: 280px; }
+  }
+  /* 两栏并排要到 1120px 才开: 更窄时持仓明细的 7 列塞不下(实测 552px 是下限), 宁可单栏也不撞车。
+     ★ min-width:0 不能少 —— 网格子项默认 min-width:auto, 盈亏分布图 13 根柱子会把自己
+     撑到 ~670px 抢走空间, 实测把持仓明细挤到 466px 导致列重叠、960px 时整页横向溢出。 */
+  @media (min-width: 1120px) {
+    .mainCols { display: grid; grid-template-columns: 7fr 5fr; gap: 0 var(--s7); align-items: start; }
+    .mainCols > * { min-width: 0; }
+    .pnlWrap { position: sticky; top: var(--s3); }
+  }
+  @media (min-width: 1100px) {
+    .hero-fig .dotnum { width: min(100%, 520px); }
+  }
+
+  /* ── 手机: 数字前置, 球群压缩后置 ─────────────────────────────────── */
+  @media (max-width: 899.98px) {
+    .hero { padding: var(--s5) 0 var(--s4); }
+    /* 球群从背景层改成正常流里的一块, 高度砍到 200px 并排在数字之后 */
+    .s-field { position: relative; inset: auto; height: 200px; margin-top: var(--s5);
+               border-top: 1px solid var(--line); }
+    .hero-splits { max-width: none; }
+    .callout .pct { font-size: 16px; }
+    .callout .cap { font-size: 9px; }
+  }
   @media (max-width: 639.98px) {
+    header { padding-top: var(--s4); }
+    .hero-fig .dotnum { width: min(100%, 300px); }
+    .split-fig { font-size: var(--t-lg); }
     .hrow-head { display: none; }
     .hrow {
       grid-template-columns: 1fr auto;
       grid-template-areas: "sym price" "meta meta" "spark spark" "value pnl" "lots lots";
-      padding: 14px 2px;
+      padding: var(--s4) 2px;
     }
     .hrow .c-sym   { grid-area: sym; }
     .hrow .c-spark { grid-area: spark; margin-top: 6px; }
     .hrow .c-spark svg { width: 120px; height: auto; }
     .hrow .c-spark:empty { display: none; }
     .hrow .c-price { grid-area: price; text-align: right; }
-    .hrow .c-meta  { grid-area: meta; display: flex; gap: 14px; font-size: 12.5px; color: var(--ink2); margin-top: 2px; }
+    .hrow .c-meta  { grid-area: meta; display: flex; gap: var(--s4); font-size: var(--t-sm); color: var(--text-2); margin-top: 2px; }
     .hrow .c-value { grid-area: value; text-align: left; margin-top: 4px; }
     .hrow .c-pnl   { grid-area: pnl; text-align: right; margin-top: 4px; }
     .hrow .lots    { grid-area: lots; }
@@ -272,72 +328,45 @@
     .mlabel { display: none; } /* 桌面表头已有「均价」列名 */
   }
 
-  .flat-note { font-size: 12.5px; color: var(--muted); padding: 8px 2px; border-top: 1px solid var(--hairline); }
-
-  /* ---- panels: 脚注式条目 ---- */
-  details.panel { border-top: 1px solid var(--rule); }
-  details.panel summary {
-    padding: 14px 2px; cursor: pointer; font-weight: 600; font-size: 14px; user-select: none;
-    list-style: none; display: flex; align-items: center; gap: 12px;
-  }
-  details.panel summary::-webkit-details-marker { display: none; }
-  details.panel summary .idx { font-size: 10px; letter-spacing: .12em; color: var(--muted); font-weight: 400; }
-  details.panel summary::after { content: "▸"; color: var(--muted); transition: transform .15s; margin-left: auto; }
-  details[open].panel summary::after { transform: rotate(90deg); }
-  .panel-body { padding: 2px 2px 20px; }
-  textarea {
-    width: 100%; min-height: 170px; resize: vertical;
-    /* 16px 起步: iOS Safari 对 <16px 的输入框聚焦时会强制放大页面 */
-    font: 16px/1.6 ui-monospace, Consolas, "Courier New", monospace;
-    color: var(--ink); background: var(--surface);
-    border: 1px solid var(--hairline); border-radius: 12px; padding: 12px;
-  }
-  .hint { font-size: 12px; color: var(--muted); margin: 8px 0; }
-  .warn-list { font-size: 12.5px; color: var(--red); margin-top: 8px; }
-  .row-gap { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
-  .field { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 13px; }
-  .field input[type=text], .field input[type=password] {
-    font: inherit; font-size: 16px; color: var(--ink); background: var(--surface);
-    border: 1px solid var(--hairline); border-radius: 10px; padding: 9px 12px;
-  }
-  label.chk { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; cursor: pointer; }
-
-  /* ---- 动效 (系统设了减少动态则全部静止) ---- */
-  button, .tile { transition: transform .15s ease, border-color .2s ease, opacity .15s ease; }
-  .hrow { transition: background-color .15s ease; }
-  .orb { transition: filter .2s ease; }
+  /* ── 动效 ─────────────────────────────────────────────────────────
+     Emil 的原则: 时长 ≤300ms, ease-out, 只动 transform/opacity(不触发重排),
+     用 CSS transition 保证随时可打断; 系统开了"减少动态"就全部静止。 */
   @media (hover: hover) {
     /* ★ .orb/.pc-col 必须排除: 它们靠 transform 定位, 通用 hover 位移会把 transform 整个替换掉,
-       球体瞬移出光标 → hover 反复进出 → 爆闪 (优先级高于任何 .orb:hover 覆盖, 只能在这里排除) */
+       球体瞬移出光标 → hover 反复进出 → 爆闪 */
     button:not(:disabled):not(.orb):not(.pc-col):hover { transform: translateY(-1px); }
     .hrow:hover { background: var(--wash); }
     .orb:hover .orb-vis { filter: blur(5px) saturate(1.35); }
-    .pc-col:hover .pc-bar { opacity: .75; }
+    .pc-col:hover .pc-bar { opacity: .72; }
+  }
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity var(--slow) var(--ease), transform var(--slow) var(--ease); }
+  .reveal.inview { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; transition: none; }
   }
   @media (prefers-reduced-motion: no-preference) {
-    body.boot .structure, body.boot .tiles, body.boot .sectorWrap {
-      animation: fadeUp .55s cubic-bezier(.2, .7, .3, 1) both;
+    body.boot .hero-main, body.boot .tiles, body.boot .sectorWrap {
+      animation: fadeUp var(--slow) var(--ease) both;
     }
-    body.boot .tiles { animation-delay: 140ms; }
-    body.boot .sectorWrap { animation-delay: 200ms; }
-    body.boot .tile .dotnum circle, body.boot .heroNum .dotnum circle { animation: dotIn .5s ease both; }
-    /* 数据刷新到达时点阵数字闪现一次 */
-    body.tick .tile .dotnum circle, body.tick .heroNum .dotnum circle { animation: dotIn .4s ease both; }
+    body.boot .tiles { animation-delay: 90ms; }
+    body.boot .sectorWrap { animation-delay: 140ms; }
+    body.boot .hero-fig .dotnum circle, body.boot .tile .dotnum circle { animation: dotIn .3s ease-out both; }
+    body.tick .hero-fig .dotnum circle, body.tick .tile .dotnum circle { animation: dotIn .28s ease-out both; }
     /* 漂浮/入场只挂在视觉层(orb-vis), 全用独立 scale/translate 通道, 不碰按钮定位 */
     .orb-vis { animation: orbDrift 9s ease-in-out infinite alternate both; animation-delay: var(--d, 0ms); }
     body.boot .orb-vis {
-      animation: orbIn .8s cubic-bezier(.2, .7, .3, 1) both, orbDrift 9s ease-in-out infinite alternate both;
-      animation-delay: var(--d, 0ms), calc(var(--d, 0ms) + .8s);
+      animation: orbIn .5s var(--ease) both, orbDrift 9s ease-in-out infinite alternate both;
+      animation-delay: var(--d, 0ms), calc(var(--d, 0ms) + .5s);
     }
-    body.boot .callout { animation: calloutIn .6s ease .5s both; }
-    body.boot .pc-bar { animation: growV .7s cubic-bezier(.2, .7, .3, 1) both; animation-delay: var(--d, 0ms); }
-    body.boot .hrow { animation: fadeUp .5s cubic-bezier(.2, .7, .3, 1) both; animation-delay: var(--d, 0ms); }
-    body.boot .meter > i { animation: growH .8s cubic-bezier(.2, .7, .3, 1) .3s both; }
-    body.boot .spark polyline { stroke-dasharray: 1; stroke-dashoffset: 1; animation: dash .9s ease-out .4s forwards; }
-    body.boot .spark circle { animation: dotIn .3s ease 1.2s both; }
+    body.boot .callout { animation: calloutIn .3s var(--ease) .35s both; }
+    body.boot .pc-bar { animation: growV var(--slow) var(--ease) both; animation-delay: var(--d, 0ms); }
+    body.boot .hrow { animation: fadeUp .28s var(--ease) both; animation-delay: var(--d, 0ms); }
+    body.boot .meter > i { animation: growH var(--slow) var(--ease) .2s both; }
+    body.boot .spark polyline { stroke-dasharray: 1; stroke-dashoffset: 1; animation: dash .6s ease-out .3s forwards; }
+    body.boot .spark circle { animation: dotIn .3s ease-out .8s both; }
     #refreshBtn.loading { animation: pulse 1.1s ease-in-out infinite; }
-    .lots-in { animation: fadeDown .25s ease both; }
-    .hrow.flash { animation: flashBg 1.1s ease; }
+    .lots-in { animation: fadeDown .2s var(--ease) both; }
+    .hrow.flash { animation: flashBg .9s ease-out; }
   }
   @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } }
   @keyframes fadeDown { from { opacity: 0; transform: translateY(-4px); } }
@@ -346,38 +375,12 @@
   @keyframes orbIn { from { opacity: 0; scale: .35; } }
   @keyframes orbDrift { from { translate: 2px -4px; } to { translate: -3px 5px; } }
   @keyframes growH { from { transform: scaleX(0); } }
+  @keyframes growV { from { transform: scaleY(0); } }
   @keyframes dash { to { stroke-dashoffset: 0; } }
   @keyframes pulse { 50% { opacity: .55; } }
-  /* callout 的入场不许碰 transform (定位靠它), 用独立 translate */
+  /* callout 的入场不许碰 transform(定位靠它), 用独立 translate */
   @keyframes calloutIn { from { opacity: 0; translate: 0 8px; } to { translate: 0 0; } }
-  @keyframes growV { from { transform: scaleY(0); } }
   @keyframes flashBg { 0% { background-color: var(--flash); } 100% { background-color: transparent; } }
-
-  /* ---- 记一笔: 行内表单 ---- */
-  .tradeWrap { margin-top: 30px; border-top: 1.5px solid var(--rule); }
-  .trade { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-top: 4px; }
-  .trade label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); flex: 1; min-width: 140px; max-width: 260px; }
-  .trade input {
-    font: inherit; font-size: 16px; color: var(--ink); background: var(--surface);
-    border: 1px solid var(--hairline); border-radius: 10px; padding: 10px 12px; width: 100%;
-  }
-  .trade-btns { display: flex; gap: 10px; padding-bottom: 1px; }
-  #sellBtn { border-color: var(--ink); }
-  .subk { font-size: 12.5px; font-weight: 700; margin: 20px 0 10px; padding-top: 16px; border-top: 1px solid var(--hairline); }
-  .subk:first-child { border-top: none; padding-top: 6px; margin-top: 0; }
-
-  footer {
-    font-size: 10.5px; letter-spacing: .04em; color: var(--muted); text-align: left;
-    border-top: 1px solid var(--rule); padding: 10px 2px 0; margin-top: 34px;
-  }
-  footer::before { content: "* "; }
-  .toast {
-    position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%);
-    background: var(--pill); color: var(--pill-ink); font-size: 13px;
-    padding: 9px 18px; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity .25s;
-    max-width: 86vw;
-  }
-  .toast.show { opacity: .95; }
 </style>
 </head>
 <body>
@@ -397,7 +400,7 @@
   </header>
 
   <div id="banner"></div>
-  <section class="structure" id="structure" style="display:none"></section>
+  <section class="hero" id="structure" style="display:none"></section>
   <section class="tiles" id="tiles"></section>
   <section class="sectorWrap" id="sectorWrap" style="display:none"></section>
   <div class="mainCols">
@@ -611,6 +614,29 @@ const CORE = (() => {
     return { rows, flats, totals, missing };
   }
 
+  // ---- 某个历史时点的总盈亏(已实现+未实现) ----
+  // 用来做"本周收益"这类区间差值: 本周收益 = 现在的总盈亏 − 上周五收盘时的总盈亏。
+  // 这个口径对期间的买卖免疫 —— 建仓那一刻浮盈是 0, 卖出那一刻只是浮盈转已实现, 两者都不改变总盈亏,
+  // 所以差值里剩下的纯粹是"这段时间价格走出来的钱", 不会被入金/滚仓污染。
+  // beforeKey: yyyymmdd, 只算这天之前的交易; px: {SYM: 该时点收盘价}; symOk: 可选的代码过滤(分币种用)
+  // 返回 {pnl, value}: pnl 当时的累计总盈亏, value 当时的持仓市值(拿来当区间涨跌%的分母)
+  // 任一当时持有的仓位缺历史价 → 返回 null (基准不完整就不能给数, 否则本周收益会凭空少一块)
+  function pnlAt(lots, beforeKey, px, symOk) {
+    const use = lots.filter(l => l.dateKey > 0 && l.dateKey < beforeKey && (!symOk || symOk(l.sym)));
+    const { positions } = aggregate(use);
+    let pnl = 0, value = 0;
+    for (const p of positions) {
+      pnl += p.realized || 0;
+      if (p.shares > 1e-9) {
+        const c = px[p.sym];
+        if (!(c > 0)) return null;
+        value += c * p.shares;
+        pnl += c * p.shares - p.cost;
+      }
+    }
+    return { pnl, value };
+  }
+
   // ---- 格式化 ----
   // 注意: 不映射 "GBp"(便士) — 伦敦股报价在 fetchQuote 里已 ÷100 归一成 GBP
   const CUR_SYM = { USD: "$", HKD: "HK$", CNY: "¥", CNH: "¥", GBP: "£", EUR: "€", JPY: "¥", CAD: "C$", AUD: "A$", CHF: "CHF " };
@@ -633,7 +659,7 @@ const CORE = (() => {
     return round6(v).toLocaleString("en-US", { maximumFractionDigits: 6 });
   }
 
-  return { parseDate, parseHoldings, aggregate, computeView, inferCurrency, fmtMoney, fmtPct, fmtShares };
+  return { parseDate, parseHoldings, aggregate, computeView, pnlAt, inferCurrency, fmtMoney, fmtPct, fmtShares };
 })();
 if (typeof module !== "undefined" && module.exports) module.exports = CORE;
 /* ===CORE-END=== */
@@ -677,7 +703,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
     return out;
   }
-  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aisectried: "pt_aisectried", aidesc: "pt_aidesc", earn: "pt_earn", holdts: "pt_holdts" };
+  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aisectried: "pt_aisectried", aidesc: "pt_aidesc", earn: "pt_earn", holdts: "pt_holdts", weekbase: "pt_weekbase" };
 
   const EXAMPLE = [
     "# 格式: 日期 代码 买入价 股数   (# 开头是注释)",
@@ -719,6 +745,13 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   for (const [k2, v2] of Object.entries(asObj(LS.get(K.earn, {})))) {
     if (v2 && typeof v2 === "object" && typeof v2.date === "string") earn[k2] = { date: v2.date, at: typeof v2.at === "number" ? v2.at : 0 };
   }
+  // 本周基准 {anchor: yyyymmdd(本周一), px: {SYM: 上个交易日收盘价}, at}
+  let weekBase = (() => {
+    const raw = asObj(LS.get(K.weekbase, {}));
+    const px = {};
+    for (const [k2, v2] of Object.entries(asObj(raw.px))) if (typeof v2 === "number" && v2 > 0) px[k2] = v2;
+    return { anchor: typeof raw.anchor === "number" ? raw.anchor : 0, px, at: typeof raw.at === "number" ? raw.at : 0 };
+  })();
   function localDayKey() {
     const d = new Date();
     return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
@@ -948,6 +981,82 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     } finally { extBusy = false; }
   }
 
+  /* ---- 本周收益的基准: 上周五(本周一之前最后一个交易日)的收盘价 ----
+     "本周"按伦敦当地日历算, 周一为一周之始。基准日不写死成"周五": 从日线里取
+     本周一之前的最后一根 bar, 碰上假期休市会自动往前顺延到真正的最后一个交易日。 */
+  function weekAnchorKey() {
+    const f = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" });
+    const [y, m, d] = f.format(new Date()).split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    const dow = dt.getUTCDay();                 // 0=周日
+    dt.setUTCDate(dt.getUTCDate() - (dow === 0 ? 6 : dow - 1)); // 退回本周一
+    return dt.getUTCFullYear() * 10000 + (dt.getUTCMonth() + 1) * 100 + dt.getUTCDate();
+  }
+  async function tryDaily(wrap, yUrl) {
+    try {
+      let j = JSON.parse(await fetchText(wrap(yUrl)));
+      if (j && typeof j.contents === "string") j = JSON.parse(j.contents);
+      const res = j && j.chart && j.chart.result && j.chart.result[0];
+      if (!res) return null;
+      const ts = res.timestamp;
+      const cl = res.indicators && res.indicators.quote && res.indicators.quote[0] && res.indicators.quote[0].close;
+      if (!Array.isArray(ts) || !Array.isArray(cl)) return null;
+      const div = res.meta && res.meta.currency === "GBp" ? 100 : 1; // 便士归一
+      const out = [];
+      for (let i = 0; i < ts.length; i++) {
+        if (typeof cl[i] !== "number" || !(cl[i] > 0)) continue;
+        const d = new Date(ts[i] * 1000); // 日线时间戳落在开盘时刻, UTC 日期即交易日
+        out.push({ k: d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(), c: cl[i] / div });
+      }
+      return out.length ? out : null;
+    } catch { return null; }
+  }
+  async function fetchDaily(sym) {
+    const yUrl = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(sym) + "?interval=1d&range=2mo";
+    if (/^https:\/\//.test(settings.customProxy || "")) {
+      const h = await tryDaily(u => settings.customProxy + encodeURIComponent(u), yUrl);
+      if (h) return h;
+    }
+    for (let i = 0; i < PROXIES.length; i++) {
+      const idx = (stickyProxy + i) % PROXIES.length;
+      const h = await tryDaily(PROXIES[idx], yUrl);
+      if (h) { stickyProxy = idx; LS.set(K.proxy, idx); return h; }
+    }
+    return null;
+  }
+  let weekBusy = false;
+  async function ensureWeekBase() {
+    if (weekBusy) return;
+    const anchor = weekAnchorKey();
+    // 要基准价的是「周初持有的仓位」, 不是「当前持仓」——
+    // 周初持有、本周内又清掉的票(卖光了就不在当前持仓里)同样要算进本周收益,
+    // 漏掉它们的话 pnlAt 会因为缺价一直返回 null, 本周收益就永远是"—"。
+    // 反过来, 本周才建仓的票不需要基准价(它周初根本不存在)。
+    const syms = [...new Set(
+      CORE.aggregate(CORE.parseHoldings(holdingsText).lots.filter(l => l.dateKey > 0 && l.dateKey < anchor))
+        .positions.filter(p => p.shares > 1e-9).map(p => p.sym)
+    )];
+    if (!syms.length) return;
+    // 跨周(anchor 变了)就整份作废重取; 同一周内只补还没有基准价的代码(新建仓的)
+    const px = weekBase.anchor === anchor ? asObj(weekBase.px) : {};
+    const need = syms.filter(s => !(px[s] > 0));
+    if (!need.length) {
+      if (weekBase.anchor !== anchor) { weekBase = { anchor, px, at: Date.now() }; LS.set(K.weekbase, weekBase); }
+      return;
+    }
+    weekBusy = true;
+    try {
+      const rs = await Promise.allSettled(need.map(s => fetchDaily(s)));
+      let got = 0;
+      rs.forEach((r, i) => {
+        if (r.status !== "fulfilled" || !r.value) return;
+        let pick = null;
+        for (const b of r.value) if (b.k < anchor) pick = b; // 升序, 最后一个即本周一之前最近的交易日
+        if (pick) { px[need[i]] = pick.c; got++; }
+      });
+      if (got) { weekBase = { anchor, px, at: Date.now() }; LS.set(K.weekbase, weekBase); render(); }
+    } finally { weekBusy = false; }
+  }
 
   // 后台补 sparkline (Finnhub 路径无历史; 不阻塞行情刷新, 半天补一次)
   let sparksBusy = false;
@@ -1014,6 +1123,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       }
       if (ok > 0) refreshSparks(syms); // 后台补 30 日走势, 不阻塞
       if (usMarketActiveish()) refreshExtended(syms); // 只在美股有交易的时段拉盘前盘后, 休市/周末不空转烧额度
+      ensureWeekBase();                // 后台补"本周收益"的基准价(上周五收盘), 不阻塞
       refreshEarnings(syms);           // 后台补财报日历, 不阻塞
       refreshAiSectors();              // 后台问 Gemini 补板块归类, 不阻塞
       if (pendingRefresh) { pendingRefresh = false; refresh(); }
@@ -1128,6 +1238,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const agg = CORE.aggregate(parsed.lots, todayKey);
     const q = effectiveQuotes(agg.positions.map(p => p.sym));
     const view = CORE.computeView(agg.positions, q);
+    attachWeekPnl(parsed, view);
 
     renderBanner(parsed, agg, view);
     renderTiles(view);
@@ -1142,6 +1253,26 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       const dayPrefix = d.toDateString() === now.toDateString() ? "" : (d.getMonth() + 1) + "/" + d.getDate() + " ";
       $("updated").textContent = "行情 " + dayPrefix + d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     } else $("updated").textContent = "";
+  }
+
+  /* 本周收益: 现在的总盈亏 − 上周五收盘时的总盈亏。
+     期间的买卖不会污染它(建仓瞬间浮盈为 0, 卖出瞬间浮盈转已实现, 总盈亏都不变),
+     所以差值就是这一周价格真正走出来的钱。基准价没取到 → 留 null, UI 显示「—」。 */
+  function attachWeekPnl(parsed, view) {
+    const anchor = weekAnchorKey();
+    if (weekBase.anchor !== anchor) return;         // 跨周了, 基准还没重取
+    for (const cur of Object.keys(view.totals)) {
+      const t = view.totals[cur];
+      if (t.totalPnl == null) continue;
+      // 只拿本币种的代码去倒推, 免得多币种混着加
+      const symOk = s => ((quotes[s] && quotes[s].currency) || CORE.inferCurrency(s)) === cur;
+      const base = CORE.pnlAt(parsed.lots, anchor, weekBase.px, symOk);
+      if (base) {
+        t.weekPnl = t.totalPnl - base.pnl;
+        // 涨跌% 对周初市值算(和「今日」对昨收市值算同一口径), 周初空仓则不给%
+        t.weekPct = base.value > 0 ? t.weekPnl / base.value : null;
+      }
+    }
   }
 
   function renderBanner(parsed, agg, view) {
@@ -1173,8 +1304,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     if (!curs.length) {
       // 区分“还没记持仓”和“有持仓但一个报价都没拿到”
       $("tiles").innerHTML = view.rows.length
-        ? `<div class="tile hero"><div class="label">总市值</div><div class="value">—</div><div class="delta">暂无行情：点「刷新」重试，或点下方各行「输入价格」手动填</div></div>`
-        : `<div class="tile hero"><div class="label">总市值</div><div class="value">—</div><div class="delta">在下方「编辑持仓」里记一笔开始</div></div>`;
+        ? `<div class="tile hero"><div class="label">总盈亏</div><div class="value">—</div><div class="delta">暂无行情：点「刷新」重试，或点下方各行「输入价格」手动填</div></div>`
+        : `<div class="tile hero"><div class="label">总盈亏</div><div class="value">—</div><div class="delta">用下方「记一笔」添加第一笔交易</div></div>`;
       return;
     }
     // 主币种 = 市值最大的; 其他币种在角标注明
@@ -1182,18 +1313,14 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const main = curs[0], t = view.totals[main];
     const others = curs.slice(1);
     const M = (v, o) => CORE.fmtMoney(v, main, o), P = CORE.fmtPct;
-    const partial = t.dayPartial > 0 ? `，不含 ${t.dayPartial} 项` : "";
-    // "总盈亏(含波动)"已经在顶部单独占一块了(见 renderStructure 的 totalHero),
-    // 这里的已实现/未实现只列各自的分项, 不再重复给合计, 免得两处数字对不上眼
+    // 视觉层级: L1 总盈亏 / L2 本周·今日 都在上面的 hero 里, 这里是 L3 —— 只放构成分项。
+    // 分项不再重复给合计, 免得两处数字对不上眼。
     const tiles = [
+      `<div class="tile"><div class="label">已实现盈亏（已落袋）</div>
+        <div class="value ${pnlCls(t.realized)}">${dotText(M(t.realized, { signed: true }), 4, true)}</div></div>`,
       `<div class="tile"><div class="label">未实现盈亏（浮动）</div>
         <div class="value ${pnlCls(t.unreal)}">${dotText(M(t.unreal, { signed: true }), 4, true)}</div>
         <div class="delta ${pnlCls(t.unreal)}">${P(t.unrealPct)}</div></div>`,
-      `<div class="tile"><div class="label">今日盈亏${view.rows.some(r => r.quote && r.quote.ext) ? "（含盘前后）" : ""}${t.dayPartial > 0 ? `（不含 ${t.dayPartial} 项）` : ""}</div>
-        <div class="value ${pnlCls(t.dayPnl)}">${t.dayPct == null ? "—" : dotText(M(t.dayPnl, { signed: true }), 4, true)}</div>
-        <div class="delta ${pnlCls(t.dayPnl)}">${t.dayPct == null ? "" : P(t.dayPct)}</div></div>`,
-      `<div class="tile"><div class="label">已实现盈亏（已落袋）</div>
-        <div class="value ${pnlCls(t.realized)}">${dotText(M(t.realized, { signed: true }), 4, true)}</div></div>`,
     ];
     // 其他币种各补一行小计
     for (const c of others) {
@@ -1208,9 +1335,11 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   /* ---- 主视觉: 毛玻璃渐变球 + 总盈亏(含波动) ----
      只呈现主币种(市值最大的那个桶): 占比是分币种算的, 混币种会把
      "某外币里的 100%" 当成全组合最大仓, 球径全错 */
-  // 海报画布槽位: 桌面文案在左 → 球群偏右; 手机文案占中带 → 球群贴上下边
-  const ORB_SLOTS = [[62, 40], [80, 66], [58, 12], [88, 24], [46, 84], [70, 6], [30, 88], [93, 50]];
-  const ORB_SLOTS_M = [[72, 16], [28, 84], [48, 8], [88, 32], [16, 20], [78, 90], [48, 92], [90, 64]];
+  // 球群槽位, 按各自画布铺开(坐标是画布内的百分比):
+  // 桌面画布 = hero 的右半边(竖高), 手机画布 = 数字下方一条 200px 的横带(扁宽)
+  const ORB_SLOTS = [[50, 48], [76, 72], [30, 22], [86, 30], [18, 74], [62, 10], [8, 42], [93, 58]];
+  const ORB_SLOTS_M = [[16, 50], [38, 26], [58, 68], [77, 34], [92, 62], [28, 80], [48, 12], [68, 88]];
+  const orbLayoutMobile = () => window.innerWidth < 900;
   function renderStructure(view) {
     const el = $("structure");
     const curs = Object.keys(view.totals).sort((a, b) => view.totals[b].value - view.totals[a].value);
@@ -1237,8 +1366,10 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
     const t = view.totals[mainCur];
     const maxA = Math.max(...rows.map(r => r.alloc));
-    const slots = window.innerWidth < 640 ? ORB_SLOTS_M : ORB_SLOTS;
-    const RMAX = window.innerWidth < 640 ? 18 : 13; // 最大球半径 (% 首屏画布宽)
+    const mob = orbLayoutMobile();
+    const slots = mob ? ORB_SLOTS_M : ORB_SLOTS;
+    // 最大球半径(% 画布宽)。手机画布只有 200px 高但很宽, 半径按宽度算容易撑破上下边, 所以压小
+    const RMAX = mob ? 11 : 13;
     const orbs = [], callouts = [];
     rows.forEach((r, i) => {
       const [x, y] = slots[i];
@@ -1255,22 +1386,43 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
           <div class="cap">${esc(r.sym)} 占比</div></div>`);
       }
     });
-    // 已经落袋多少 + 今天动了多少 —— 只留这两个跟"本金算多少"无关的绝对数字,
-    // 总市值/占比结论句/总成本这些依赖本金基准的数字滚仓后会失真, 已经去掉了
-    const totalHero = t.totalPct == null ? "" : `
-        <div class="heroNum heroNum2">
-          <div class="label">总盈亏（含波动，已实现+未实现）</div>
-          <div class="heroVal ${pnlCls(t.totalPnl)}">${dotText(CORE.fmtMoney(t.totalPnl, mainCur, { signed: true }), 4.6, true)}</div>
-          <div class="heroSub ${pnlCls(t.totalPnl)}">${CORE.fmtPct(t.totalPct)} · 已实现 ${CORE.fmtMoney(t.realized, mainCur, { signed: true })} + 未实现 ${CORE.fmtMoney(t.unreal, mainCur, { signed: true })}</div>
+    /* 三级视觉层级 (Mercury/Linear 的做法: 一个绝对主角, 其余按重要性递减):
+         L1 总盈亏  —— 点阵巨数, 全页最大
+         L2 本周/今日 —— 并排两栏, 中号
+         L3 已实现/未实现 —— 下面的统计条(renderTiles)
+       只放跟"本金算多少"无关的绝对数字; 总市值/总成本那类依赖本金基准的滚仓后会失真, 已去掉。 */
+    const M = (v, o) => CORE.fmtMoney(v, mainCur, o);
+    const splitCell = (label, pnl, pct, note) => `
+          <div class="split">
+            <div class="eyebrow">${label}</div>
+            <div class="split-fig ${pnl == null ? "" : pnlCls(pnl)}">${pnl == null ? "—" : M(pnl, { signed: true })}</div>
+            <div class="split-sub ${pnl == null ? "" : pnlCls(pnl)}">${pct == null ? "" : CORE.fmtPct(pct)}</div>
+            ${note ? `<div class="split-note">${note}</div>` : ""}
+          </div>`;
+    const dayNote = [
+      view.rows.some(r => r.quote && r.quote.ext) ? "含盘前后" : "",
+      t.dayPartial > 0 ? `不含 ${t.dayPartial} 项` : "",
+    ].filter(Boolean).join(" · ");
+    const heroBlock = t.totalPct == null ? "" : `
+        <div class="hero-total">
+          <div class="eyebrow">总盈亏 · 已实现 + 未实现</div>
+          <div class="hero-fig ${pnlCls(t.totalPnl)}">${dotText(M(t.totalPnl, { signed: true }), 5.4, true)}</div>
+          <div class="hero-meta">
+            <b class="${pnlCls(t.totalPnl)}">${CORE.fmtPct(t.totalPct)}</b><span class="sep">·</span>已实现 ${M(t.realized, { signed: true })}<span class="sep">·</span>未实现 ${M(t.unreal, { signed: true })}
+          </div>
+        </div>
+        <div class="hero-splits">
+          ${splitCell("本周", t.weekPnl == null ? null : t.weekPnl, t.weekPct, t.weekPnl == null ? "基准取中…" : "")}
+          ${splitCell("今日", t.dayPct == null ? null : t.dayPnl, t.dayPct, dayNote)}
         </div>`;
     el.innerHTML = `
-      <div class="s-left">
+      <div class="hero-main">
         <div class="s-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none"><g stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="12" y1="3" x2="12" y2="21"/><line x1="4.2" y1="7.5" x2="19.8" y2="16.5"/><line x1="19.8" y1="7.5" x2="4.2" y2="16.5"/></g></svg></div>
-        ${totalHero}
+        ${heroBlock}
       </div>
       <div class="s-field">
-        <div class="s-decor" style="left:64%;top:50%;width:56%"></div>
-        <div class="s-decor" style="left:40%;top:26%;width:24%"></div>
+        ${mob ? "" : `<div class="s-decor" style="left:52%;top:50%;width:78%"></div>
+        <div class="s-decor" style="left:28%;top:26%;width:32%"></div>`}
         ${orbs.join("")}${callouts.join("")}
         <div class="chart-tip" id="chartTip" hidden></div>
       </div>`;
@@ -1709,7 +1861,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
           : descFailed.has(r.sym) ? `详解没生成出来（AI 没响应）。<a href="#" data-redesc="${esc(r.sym)}">点这里重试</a>`
           : (apiQuietHours() ? `夜间静默时段（伦敦 21:50–09:00）不主动生成。<a href="#" data-redesc="${esc(r.sym)}">仍要现在生成</a>`
           : "股票详解生成中…")}</div>`
-      : `<div class="desc" style="color:var(--muted)">股票详解未激活：用带 #h= 的魔法链接打开一次本页面即可（链接里带着 Gemini Key）。</div>`;
+      : `<div class="desc" style="color:var(--text-dim)">股票详解未激活：用带 #h= 的魔法链接打开一次本页面即可（链接里带着 Gemini Key）。</div>`;
     return `<div class="lots${r.sym === justExpanded ? " lots-in" : ""}">${descHtml}<table>
       <tr><th>日期</th><th style="text-align:left">操作</th><th>价格</th><th>股数</th><th>成本</th><th>盈亏</th></tr>
       ${rows}</table>${note}</div>`;
