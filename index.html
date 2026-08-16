@@ -1110,7 +1110,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       });
       LS.set(K.quotes, quotes);
       LS.set(K.manual, manual);
-      if (ok === 0) toast("行情获取失败：稍后再点「刷新」，或在设置里配 Finnhub Key，或点行内 ✎ 手动输价");
+      if (ok === 0) toast("行情获取失败：稍后再点「刷新」，或点行内 ✎ 手动输价"); // 应用里没有"设置"页, 别再叫用户去一个点不到的地方
     } finally {
       refreshing = false;
       $("refreshBtn").classList.remove("loading");
@@ -1344,10 +1344,13 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const el = $("structure");
     const curs = Object.keys(view.totals).sort((a, b) => view.totals[b].value - view.totals[a].value);
     const mainCur = curs[0];
-    const all = mainCur == null ? []
-      : view.rows.filter(r => r.value != null && r.alloc > 0 && r.cur === mainCur);
-    if (!all.length) { el.style.display = "none"; el.innerHTML = ""; return; }
+    // ★ 只有"完全没有任何数据"(既没有当前持仓也没有已清仓的历史)才整块隐藏。之前这里拿
+    // "有没有当前持仓可以画球"当整个 hero(含总盈亏/本周/今日)的开关——全部清仓、只剩
+    // 已实现盈亏的账户(比如刚清空仓位那几天), view.rows 是空的但 view.totals 里明明有
+    // 数据, 却被这行连累成整块空白, 一个数字都看不到。球群画不画是另一件事, 不该共用这个开关。
+    if (mainCur == null) { el.style.display = "none"; el.innerHTML = ""; return; }
     el.style.display = "";
+    const all = view.rows.filter(r => r.value != null && r.alloc > 0 && r.cur === mainCur);
     // 持仓多时海报不许乱: 只画最大的 7 只, 其余聚合成一颗「其他」球 (大小=合计占比, 颜色=合计盈亏)
     const MAXORB = 7;
     let rows = all;
@@ -1365,27 +1368,29 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       }]);
     }
     const t = view.totals[mainCur];
-    const maxA = Math.max(...rows.map(r => r.alloc));
     const mob = orbLayoutMobile();
-    const slots = mob ? ORB_SLOTS_M : ORB_SLOTS;
-    // 最大球半径(% 画布宽)。手机画布只有 200px 高但很宽, 半径按宽度算容易撑破上下边, 所以压小
-    const RMAX = mob ? 11 : 13;
     const orbs = [], callouts = [];
-    rows.forEach((r, i) => {
-      const [x, y] = slots[i];
-      const rad = Math.min(RMAX, Math.max(3.5, RMAX * Math.sqrt(r.alloc / maxA)));
-      const cls = r.unreal > 0 ? "pos-orb" : r.unreal < 0 ? "neg-orb" : "flat-orb";
-      const op = (0.55 + Math.min(0.45, Math.abs(r.unrealPct || 0) * 3)).toFixed(2);
-      const label = r.otherCount ? `其他 ${r.otherCount} 只` : r.sym;
-      const tip = `${label} · 市值 ${CORE.fmtMoney(r.value, r.cur)} · ${r.unreal >= 0 ? "盈" : "亏"} ${CORE.fmtPct(Math.abs(r.unrealPct), false)}`;
-      orbs.push(`<button class="orb" data-idx="${i}" data-row="${r.otherCount ? "" : esc(r.sym)}" data-tip="${esc(tip)}" aria-label="${esc(tip)}，点击查看该行"
-        style="left:${x}%;top:${y}%;width:${(rad * 2).toFixed(1)}%;opacity:${op}"><i class="orb-vis ${cls}" style="--d:${i * 90}ms"></i></button>`);
-      if (i < 3) {
-        callouts.push(`<div class="callout" data-orb="${i}">
-          <div class="pct">${(r.alloc * 100).toFixed(0)}<span class="pctsign">%</span></div>
-          <div class="cap">${esc(r.sym)} 占比</div></div>`);
-      }
-    });
+    if (rows.length) {
+      const maxA = Math.max(...rows.map(r => r.alloc));
+      const slots = mob ? ORB_SLOTS_M : ORB_SLOTS;
+      // 最大球半径(% 画布宽)。手机画布只有 200px 高但很宽, 半径按宽度算容易撑破上下边, 所以压小
+      const RMAX = mob ? 11 : 13;
+      rows.forEach((r, i) => {
+        const [x, y] = slots[i];
+        const rad = Math.min(RMAX, Math.max(3.5, RMAX * Math.sqrt(r.alloc / maxA)));
+        const cls = r.unreal > 0 ? "pos-orb" : r.unreal < 0 ? "neg-orb" : "flat-orb";
+        const op = (0.55 + Math.min(0.45, Math.abs(r.unrealPct || 0) * 3)).toFixed(2);
+        const label = r.otherCount ? `其他 ${r.otherCount} 只` : r.sym;
+        const tip = `${label} · 市值 ${CORE.fmtMoney(r.value, r.cur)} · ${r.unreal >= 0 ? "盈" : "亏"} ${CORE.fmtPct(Math.abs(r.unrealPct), false)}`;
+        orbs.push(`<button class="orb" data-idx="${i}" data-row="${r.otherCount ? "" : esc(r.sym)}" data-tip="${esc(tip)}" aria-label="${esc(tip)}，点击查看该行"
+          style="left:${x}%;top:${y}%;width:${(rad * 2).toFixed(1)}%;opacity:${op}"><i class="orb-vis ${cls}" style="--d:${i * 90}ms"></i></button>`);
+        if (i < 3) {
+          callouts.push(`<div class="callout" data-orb="${i}">
+            <div class="pct">${(r.alloc * 100).toFixed(0)}<span class="pctsign">%</span></div>
+            <div class="cap">${esc(r.sym)} 占比</div></div>`);
+        }
+      });
+    }
     /* 三级视觉层级 (Mercury/Linear 的做法: 一个绝对主角, 其余按重要性递减):
          L1 总盈亏  —— 点阵巨数, 全页最大
          L2 本周/今日 —— 并排两栏, 中号
@@ -1403,12 +1408,16 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       view.rows.some(r => r.quote && r.quote.ext) ? "含盘前后" : "",
       t.dayPartial > 0 ? `不含 ${t.dayPartial} 项` : "",
     ].filter(Boolean).join(" · ");
-    const heroBlock = t.totalPct == null ? "" : `
+    // ★ totalPct 会是 null 的情况: 净投入本金 <=0, 典型是"净卖出者"(赚了钱、提走的比放进去的多)。
+    // 这只影响那一个百分比, 不该连累总盈亏的金额、更不该连累本周/今日(它们跟 invested 毫无关系)——
+    // 之前这一整块用 t.totalPct==null 兜底成空字符串, 净卖出者会连本周/今日一起在首屏彻底消失。
+    const totalPctHtml = t.totalPct == null ? "" : `<b class="${pnlCls(t.totalPnl)}">${CORE.fmtPct(t.totalPct)}</b><span class="sep">·</span>`;
+    const heroBlock = `
         <div class="hero-total">
           <div class="eyebrow">总盈亏 · 已实现 + 未实现</div>
           <div class="hero-fig ${pnlCls(t.totalPnl)}">${dotText(M(t.totalPnl, { signed: true }), 5.4, true)}</div>
           <div class="hero-meta">
-            <b class="${pnlCls(t.totalPnl)}">${CORE.fmtPct(t.totalPct)}</b><span class="sep">·</span>已实现 ${M(t.realized, { signed: true })}<span class="sep">·</span>未实现 ${M(t.unreal, { signed: true })}
+            ${totalPctHtml}已实现 ${M(t.realized, { signed: true })}<span class="sep">·</span>未实现 ${M(t.unreal, { signed: true })}
           </div>
         </div>
         <div class="hero-splits">
@@ -1590,10 +1599,17 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
           }
         } catch {}
       }
+      // ★ 不能写成 lastLocalEdit || Date.now() —— applyImport() 会把 lastLocalEdit 压到 1
+      // (故意的, 让下一次拉取云端必胜), 但 1 是真值, "||" 不会把它换成 Date.now(), 万一
+      // 合并没触发更新(仍是这个 1), 这里就会把 updatedAt:1 发给服务器。服务器的后写胜出
+      // 逻辑通常会把这种低到离谱的时间戳挡下来, 但空 token 或数据库重建后的第一次写入
+      // 没有旧值可比, 会被原样收下, 从此这份数据带着一个几乎为 0 的时间戳, 往后谁的推送
+      // 时间戳只要不是 1 都能"合法"覆盖它——防线形同虚设。判断该不该用 lastLocalEdit
+      // 得看它像不像真实时间, 不能只看真假值。
       const r = await fetch(ep, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ holdings: holdingsText, updatedAt: lastLocalEdit || Date.now() }),
+        body: JSON.stringify({ holdings: holdingsText, updatedAt: lastLocalEdit > 1 ? lastLocalEdit : Date.now() }),
       });
       if (r.status === 409) { // 云端比本机新 → 采纳云端
         const j = await r.json();
