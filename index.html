@@ -2000,19 +2000,27 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   let rsT;
   window.addEventListener("resize", () => { clearTimeout(rsT); rsT = setTimeout(render, 180); });
 
+  // 静默窗只该拦"拉行情"(打第三方免费代理, 有配额/频率顾虑), 不该拦"拉持仓同步"——
+  // pullSync 只打自己部署的 Deno KV 端点, 没有配额顾虑, 而且是设备间数据一致的根本保障。
+  // 之前 pullSync 跟 refresh 绑在同一个 apiQuietHours() 开关下, 结果只在白天打开过页面的
+  // 设备才会同步到别的设备记的新交易——夜里/主要在静默窗口内使用的设备会一直停在最后一次
+  // "凑巧撞上白天"的状态, 持仓可以卡上好几天不更新(实测复现: 卡在 8/10, 后续两天的交易,
+  // 包括一笔全部清仓, 完全没同步进来)。
   render();      // 先用缓存/手动价即时渲染
-  if (!apiQuietHours()) {
-    pullSync();  // 拉云端持仓(若比本机新则采纳并自动刷新)
-    refresh();   // 再拉最新行情
-  }
+  pullSync();    // 拉云端持仓(若比本机新则采纳并自动刷新), 任何时段都跑
+  if (!apiQuietHours()) refresh(); // 行情才是打配额的那部分, 静默时段跳过
 
-  // 自动刷新: 页面可见时每 5 分钟; 切回页面且行情 >2 分钟旧时刷一次
-  // 夜间静默(伦敦 21:50–09:00)期间整段跳过, 定时器照常转, 一过 9 点最多 5 分钟内自动补上
-  setInterval(() => { if (!document.hidden && !apiQuietHours()) { pullSync(); refresh(); } }, 5 * 60 * 1000);
+  // 自动刷新: 页面可见时每 5 分钟对一次持仓同步; 行情刷新在夜间静默(伦敦 21:50–09:00)期间跳过,
+  // 一过 9 点最多 5 分钟内自动补上
+  setInterval(() => {
+    if (document.hidden) return;
+    pullSync();
+    if (!apiQuietHours()) refresh();
+  }, 5 * 60 * 1000);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
-    if (apiQuietHours()) return; // 夜间静默: 只用缓存渲染, 不发任何请求
-    pullSync(); // 切回页面先对一次云端持仓
+    pullSync(); // 切回页面先对一次云端持仓, 不受夜间静默限制
+    if (apiQuietHours()) return; // 行情要打配额, 静默时段先不拉
     const tsList = Object.values(quotes).map(x => x.ts || 0);
     const newest = tsList.length ? Math.max(...tsList) : 0;
     if (Date.now() - newest > 2 * 60 * 1000) refresh();
