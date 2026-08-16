@@ -1781,7 +1781,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       const M = (v, o) => CORE.fmtMoney(v, cur, o);
       const hasQ = r.value != null;
       const priceHtml = hasQ
-        ? `${M(r.quote.price)}<button class="editp" data-manual="${esc(r.sym)}" aria-label="手动改价" title="手动改价">✎</button>${r.quote.ext ? ` <span class="manual-mark">${esc(r.quote.ext)}${r.quote.extPct != null ? " " + CORE.fmtPct(r.quote.extPct) : ""}</span>` : ""}${r.quote.manual ? ' <span class="manual-mark">手动</span>' : ""}${r.quote.stale ? ' <span class="manual-mark">⚠︎旧</span>' : ""}<span class="sub ${pnlCls(r.dayPnl)}">${r.dayPct == null ? "" : arrow(r.dayPnl) + " " + P(r.dayPct)}</span>`
+        ? `${M(r.quote.price)}<button class="editp" data-manual="${esc(r.sym)}" aria-label="手动改价" title="手动改价">✎</button>${r.quote.ext ? ` <span class="manual-mark">${esc(r.quote.ext)}${r.quote.extPct != null ? " " + CORE.fmtPct(r.quote.extPct) : ""}</span>` : ""}${r.quote.manual ? ' <span class="manual-mark">手动</span>' : ""}${r.quote.stale ? ' <span class="manual-mark" title="超过24小时没刷新到新报价">旧价</span>' : ""}<span class="sub ${pnlCls(r.dayPnl)}">${r.dayPct == null ? "" : arrow(r.dayPnl) + " " + P(r.dayPct)}</span>`
         : `<button data-manual="${esc(r.sym)}" style="font-size:12px;padding:3px 8px">输入价格</button>`;
       const lotsHtml = expanded.has(r.sym) ? renderLots(r, cur) : "";
       const spark = r.quote && r.quote.spark;
@@ -1897,8 +1897,10 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
   }
 
+  // 夜间静默拦的是"自动"轮询(定时器/切回页面/首次打开)偷偷烧配额, 不该拦用户自己点的这一下——
+  // 之前这里跟自动刷新一样直接 return, 只弹一条容易被划走忽略的小提示, 相当于按钮在静默时段完全失灵。
   $("refreshBtn").onclick = () => {
-    if (apiQuietHours()) { toast("夜间静默时段（伦敦 21:50–09:00）不拉取行情，白天会自动恢复"); return; }
+    if (apiQuietHours()) toast("夜间静默时段，仍手动拉取一次");
     refresh();
   };
 
