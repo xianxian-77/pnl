@@ -1,5 +1,5 @@
 // 离线壳 Service Worker — 缓存页面本身(网络优先, 断网回缓存), 行情/AI 请求一律不拦截
-const CACHE = "pnl-shell-v1";
+const CACHE = "pnl-shell-v2";
 
 self.addEventListener("install", e => {
   e.waitUntil(
@@ -23,9 +23,12 @@ self.addEventListener("fetch", e => {
   const url = new URL(req.url);
   const isShell = req.mode === "navigate" || url.pathname.endsWith("/index.html");
   if (!isShell) return; // 行情/AI/代理请求直连网络, 不缓存
-  // 网络优先: 永远先要最新页面(顺带解决"传了新版看到旧版"的缓存问题), 断网才回缓存壳
+  // 网络优先: 永远先要最新页面(顺带解决"传了新版看到旧版"的缓存问题), 断网才回缓存壳。
+  // cache:"no-store" 是关键 —— GitHub Pages 给 index.html 发的是 max-age=600, 不显式声明的话
+  // 浏览器自己的 HTTP 缓存会在这 10 分钟里直接吃缓存应付掉这个 fetch, 连网都不上, SW 的
+  // "网络优先"名存实亡: 部署新版后 10 分钟内打开页面, 看到的可能还是刚部署前的旧版。
   e.respondWith(
-    fetch(req).then(r => {
+    fetch(req, { cache: "no-store" }).then(r => {
       const cp = r.clone();
       caches.open(CACHE).then(c => c.put("./index.html", cp)).catch(() => {});
       return r;
