@@ -905,23 +905,13 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     return h >= 8 || h < 1;
   }
 
-  // 夜间静默窗(伦敦时间 21:50–次日09:00): 不自动拉行情/AI/同步, 省额度也少干烧电量的空转。
-  // 用 Intl 按 Europe/London 时区取当地星期几+小时分钟, 换季夏令时(BST/GMT)自动跟着走, 不用手改偏移量。
-  function londonParts() {
-    const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
-    const get = t => parts.find(p => p.type === t).value;
-    return { day: get("weekday"), minutes: (+get("hour")) * 60 + (+get("minute")) };
-  }
-  function apiQuietHours() {
-    const { day, minutes: t } = londonParts();
-    const normallyQuiet = t >= 21 * 60 + 50 || t < 9 * 60; // 21:50 起 或 09:00 前
-    if (!normallyQuiet) return false;
-    // 周五晚场美股收盘后还有夜盘(after-hours), 夜盘收尾才算这周真正结束, 不该跟平时
-    // 一样 21:50 一到点就掐掉; 复用 usMarketActiveish()(按 UTC 周几+小时判断)看
-    // 夜盘是否还在走 —— 它本身已经把"周五夜盘拖到周六凌晨"这段算作活跃
-    if ((day === "Fri" || day === "Sat") && usMarketActiveish()) return false;
-    return true;
-  }
+  // 静默窗: 不自动拉行情/AI/同步, 省额度也少干烧电量的空转 —— 但"该不该静默"看的应该是
+  // 美股是否还在交易(含盘前盘后), 不是伦敦几点。之前用固定的伦敦 21:50–09:00 时钟窗口,
+  // 算下来伦敦 21:50 ≈ 美东下午 4:50~5:50, 离常规收盘(16:00)才过不到 2 小时, 夜盘(after-hours
+  // 一直开到 20:00 美东)几乎每晚都被腰斩——不只是周五才有这问题, 一周五个交易日全中招。
+  // 直接复用 usMarketActiveish()(按 UTC 周几+小时判断, 已经把盘前/常规/夜盘整段算作活跃),
+  // 不用它就说明这会儿真的没什么好拉的(深夜死档或周末), 不用另开一套时钟逻辑。
+  function apiQuietHours() { return !usMarketActiveish(); }
 
   /* ---- 盘前/盘后覆盖层: Yahoo 1 分钟线(includePrePost)取最新延时成交 ----
      Finnhub 免费档不含盘前(实测时间戳停在常规收盘); 仅对美股(无后缀)运行,
@@ -1875,7 +1865,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     const descHtml = settings.geminiKey
       ? `<div class="desc">${aiDesc[r.sym] ? esc(aiDesc[r.sym])
           : descFailed.has(r.sym) ? `详解没生成出来（AI 没响应）。<a href="#" data-redesc="${esc(r.sym)}">点这里重试</a>`
-          : (apiQuietHours() ? `夜间静默时段（伦敦 21:50–09:00）不主动生成。<a href="#" data-redesc="${esc(r.sym)}">仍要现在生成</a>`
+          : (apiQuietHours() ? `美股休市时段不主动生成。<a href="#" data-redesc="${esc(r.sym)}">仍要现在生成</a>`
           : "股票详解生成中…")}</div>`
       : `<div class="desc" style="color:var(--text-dim)">股票详解未激活：用带 #h= 的魔法链接打开一次本页面即可（链接里带着 Gemini Key）。</div>`;
     return `<div class="lots${r.sym === justExpanded ? " lots-in" : ""}">${descHtml}<table>
@@ -2026,8 +2016,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
   pullSync();    // 拉云端持仓(若比本机新则采纳并自动刷新), 任何时段都跑
   if (!apiQuietHours()) refresh(); // 行情才是打配额的那部分, 静默时段跳过
 
-  // 自动刷新: 页面可见时每 5 分钟对一次持仓同步; 行情刷新在夜间静默(伦敦 21:50–09:00)期间跳过,
-  // 一过 9 点最多 5 分钟内自动补上
+  // 自动刷新: 页面可见时每 5 分钟对一次持仓同步; 行情刷新在美股休市时段跳过,
+  // 一开盘最多 5 分钟内自动补上
   setInterval(() => {
     if (document.hidden) return;
     pullSync();
