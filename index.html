@@ -116,6 +116,8 @@
   /* L1 主数字: 全页最大, 一眼定位 */
   .hero-fig { margin: var(--s2) 0 var(--s3); }
   .hero-fig .dotnum { width: min(100%, 460px); }
+  /* 约合人民币: 紧贴巨数下方, 比它小一档、比 hero-meta 显眼一点, 汇率按天更新不追盘中 */
+  .hero-fx { font-size: var(--t-md); color: var(--text-2); font-variant-numeric: tabular-nums; margin-bottom: var(--s2); }
   .hero-meta { font-size: var(--t-base); color: var(--text-2); font-variant-numeric: tabular-nums; }
   .hero-meta b { font-weight: 650; }
   .hero-meta .sep { color: var(--line-strong); margin: 0 var(--s2); }
@@ -703,7 +705,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     }
     return out;
   }
-  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aisectried: "pt_aisectried", aidesc: "pt_aidesc", earn: "pt_earn", holdts: "pt_holdts", weekbase: "pt_weekbase" };
+  const K = { holdings: "pt_holdings", quotes: "pt_quotes", manual: "pt_manual", settings: "pt_settings", proxy: "pt_proxy", aisec: "pt_aisec", aisectried: "pt_aisectried", aidesc: "pt_aidesc", earn: "pt_earn", holdts: "pt_holdts", weekbase: "pt_weekbase", fx: "pt_fx" };
 
   const EXAMPLE = [
     "# 格式: 日期 代码 买入价 股数   (# 开头是注释)",
@@ -752,6 +754,11 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     for (const [k2, v2] of Object.entries(asObj(raw.px))) if (typeof v2 === "number" && v2 > 0) px[k2] = v2;
     return { anchor: typeof raw.anchor === "number" ? raw.anchor : 0, px, at: typeof raw.at === "number" ? raw.at : 0 };
   })();
+  // 约合人民币的汇率缓存 {CUR: {rate, at}} —— 按天更新, 不追实时跳动
+  const fxRates = {};
+  for (const [k2, v2] of Object.entries(asObj(LS.get(K.fx, {})))) {
+    if (v2 && typeof v2 === "object" && typeof v2.rate === "number" && v2.rate > 0) fxRates[k2] = { rate: v2.rate, at: typeof v2.at === "number" ? v2.at : 0 };
+  }
   function localDayKey() {
     const d = new Date();
     return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
@@ -1048,6 +1055,28 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     } finally { weekBusy = false; }
   }
 
+  /* ---- 约合人民币: 汇率按天缓存, 不追盘中跳动 ----
+     Yahoo 外汇代码是 "{基础币}CNY=X"(USD 记两种写法都通, 用 USDCNY=X 跟其他币种保持一个格式)。
+     直接复用 fetchYahoo/tryYahoo 那整条自定义代理+公共代理轮询链路, 不用另起一套抓取逻辑——
+     forex 的 chart 接口返回结构跟股票一样, meta.regularMarketPrice 就是"1 基础币 = 多少人民币"。 */
+  const FX_TTL = 24 * 3600 * 1000; // 一天一算, 不是实时汇率
+  let fxBusy = false;
+  async function ensureFxRates(curs) {
+    if (fxBusy) return;
+    const now = Date.now();
+    const need = curs.filter(c => c && c !== "CNY" && !(fxRates[c] && now - fxRates[c].at < FX_TTL));
+    if (!need.length) return;
+    fxBusy = true;
+    try {
+      const rs = await Promise.allSettled(need.map(c => fetchYahoo(c + "CNY=X")));
+      let got = 0;
+      rs.forEach((r, i) => {
+        if (r.status === "fulfilled" && r.value && r.value.price > 0) { fxRates[need[i]] = { rate: r.value.price, at: now }; got++; }
+      });
+      if (got) { LS.set(K.fx, fxRates); render(); }
+    } finally { fxBusy = false; }
+  }
+
   // 后台补 sparkline (Finnhub 路径无历史; 不阻塞行情刷新, 半天补一次)
   let sparksBusy = false;
   async function refreshSparks(syms) {
@@ -1114,6 +1143,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
       if (ok > 0) refreshSparks(syms); // 后台补 30 日走势, 不阻塞
       if (usMarketActiveish()) refreshExtended(syms); // 只在美股有交易的时段拉盘前盘后, 休市/周末不空转烧额度
       ensureWeekBase();                // 后台补"本周收益"的基准价(上周五收盘), 不阻塞
+      ensureFxRates([...new Set(syms.map(s => (quotes[s] && quotes[s].currency) || CORE.inferCurrency(s)))]); // 后台补人民币汇率, 一天一次, 不阻塞
       refreshEarnings(syms);           // 后台补财报日历, 不阻塞
       refreshAiSectors();              // 后台问 Gemini 补板块归类, 不阻塞
       if (pendingRefresh) { pendingRefresh = false; refresh(); }
@@ -1402,10 +1432,14 @@ if (typeof module !== "undefined" && module.exports) module.exports = CORE;
     // 这只影响那一个百分比, 不该连累总盈亏的金额、更不该连累本周/今日(它们跟 invested 毫无关系)——
     // 之前这一整块用 t.totalPct==null 兜底成空字符串, 净卖出者会连本周/今日一起在首屏彻底消失。
     const totalPctHtml = t.totalPct == null ? "" : `<b class="${pnlCls(t.totalPnl)}">${CORE.fmtPct(t.totalPct)}</b><span class="sep">·</span>`;
+    // 约合人民币: 汇率按天缓存(ensureFxRates), 不追盘中跳动; 汇率没拉到就不显示, 不拿旧数瞎猜
+    const fxRate = mainCur === "CNY" ? 1 : (fxRates[mainCur] && fxRates[mainCur].rate > 0 ? fxRates[mainCur].rate : null);
+    const cnyHtml = fxRate == null ? "" : `<div class="hero-fx">≈ ${CORE.fmtMoney(t.totalPnl * fxRate, "CNY", { signed: true, dp: 0 })}</div>`;
     const heroBlock = `
         <div class="hero-total">
           <div class="eyebrow">总盈亏 · 已实现 + 未实现</div>
           <div class="hero-fig ${pnlCls(t.totalPnl)}">${dotText(M(t.totalPnl, { signed: true }), 5.4, true)}</div>
+          ${cnyHtml}
           <div class="hero-meta">
             ${totalPctHtml}已实现 ${M(t.realized, { signed: true })}<span class="sep">·</span>未实现 ${M(t.unreal, { signed: true })}
           </div>
